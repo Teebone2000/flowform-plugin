@@ -2,84 +2,7 @@
 
 static juce::Colour accent() { return juce::Colour::fromRGB (0, 191, 255); }
 
-FlowFormAudioProcessorEditor::BlueSteelLNF::BlueSteelLNF()
-{
-    setColour (juce::Slider::thumbColourId, accent());
-    setColour (juce::Slider::rotarySliderFillColourId, accent());
-    setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour::fromRGB (40, 40, 40));
-    setColour (juce::ComboBox::backgroundColourId, juce::Colour::fromRGB (18, 18, 20));
-    setColour (juce::ComboBox::outlineColourId, juce::Colour::fromRGB (40, 60, 70));
-    setColour (juce::TextButton::buttonColourId, juce::Colour::fromRGB (42, 42, 42));
-    setColour (juce::TextButton::textColourOffId, juce::Colours::white.withAlpha (0.85f));
-}
 
-void FlowFormAudioProcessorEditor::BlueSteelLNF::drawRotarySlider (
-    juce::Graphics& g, int x, int y, int w, int h,
-    float pos, float startA, float endA, juce::Slider&)
-{
-    auto r = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (2.0f);
-    auto cx = r.getCentreX(), cy = r.getCentreY();
-    auto radius = juce::jmin (r.getWidth(), r.getHeight()) * 0.5f;
-    g.setColour (juce::Colours::black.withAlpha (0.35f));
-    g.fillEllipse (r.translated (0.0f, 2.0f));
-    juce::Colour top (35, 40, 48), bot (10, 10, 12);
-    g.setGradientFill (juce::ColourGradient (top, cx, r.getY(), bot, cx, r.getBottom(), false));
-    g.fillEllipse (r);
-    g.setColour (juce::Colours::white.withAlpha (0.06f));
-    g.drawEllipse (r, 1.0f);
-    auto ang = startA + pos * (endA - startA);
-    auto arcR = r.reduced (radius * 0.18f);
-    juce::Path bg, fg;
-    bg.addCentredArc (cx, cy, arcR.getWidth() * 0.5f, arcR.getHeight() * 0.5f, 0.0f, startA, endA, true);
-    fg.addCentredArc (cx, cy, arcR.getWidth() * 0.5f, arcR.getHeight() * 0.5f, 0.0f, startA, ang, true);
-    g.setColour (juce::Colours::white.withAlpha (0.08f));
-    g.strokePath (bg, juce::PathStrokeType (2.0f));
-    g.setColour (accent().withAlpha (0.9f));
-    g.strokePath (fg, juce::PathStrokeType (2.6f));
-    auto p = juce::Point<float> (cx + std::cos (ang) * (radius * 0.78f), cy + std::sin (ang) * (radius * 0.78f));
-    g.drawLine (cx, cy, p.x, p.y, 2.0f);
-}
-
-void FlowFormAudioProcessorEditor::BlueSteelLNF::drawLinearSlider (
-    juce::Graphics& g, int x, int y, int w, int h,
-    float pos, float, float, int, juce::Slider& sl)
-{
-    juce::ignoreUnused (sl);
-    auto track = juce::Rectangle<float> ((float) x, (float) y + 8.0f, (float) w, 6.0f).reduced (4.0f, 0);
-    g.setColour (juce::Colours::black.withAlpha (0.5f));
-    g.fillRoundedRectangle (track, 3.0f);
-    float fillW = std::max (0.0f, track.getWidth() * pos);
-    g.setColour (accent().withAlpha (0.5f));
-    g.fillRoundedRectangle (track.withWidth (fillW), 3.0f);
-    auto handle = juce::Rectangle<float> (track.getX() + fillW - 5.0f, track.getY() - 4.0f, 10.0f, 14.0f);
-    g.setColour (accent());
-    g.fillRoundedRectangle (handle, 3.0f);
-}
-
-void FlowFormAudioProcessorEditor::BlueSteelLNF::drawComboBox (
-    juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox& box)
-{
-    auto r = juce::Rectangle<float> (0, 0, (float) w, (float) h).reduced (1.0f);
-    g.setColour (juce::Colour::fromRGB (18, 18, 20));
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (accent().withAlpha (0.20f));
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
-    g.setColour (juce::Colours::white.withAlpha (0.85f));
-    g.setFont (juce::FontOptions (10.0f));
-    g.drawFittedText (box.getText(), r.toNearestInt().reduced (6, 0), juce::Justification::centredLeft, 1);
-}
-
-void FlowFormAudioProcessorEditor::BlueSteelLNF::drawButtonBackground (
-    juce::Graphics& g, juce::Button& b, const juce::Colour&, bool, bool)
-{
-    auto r = b.getLocalBounds().toFloat().reduced (1.0f);
-    auto on = b.getToggleState();
-    juce::Colour col = on ? accent() : juce::Colour::fromRGB (24, 24, 26);
-    g.setColour (col.withAlpha (on ? 0.30f : 0.9f));
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (juce::Colours::white.withAlpha (0.08f));
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
-}
 
 // Helpers
 void FlowFormAudioProcessorEditor::styleKnob (juce::Slider& s, int sz)
@@ -152,7 +75,7 @@ void FlowFormAudioProcessorEditor::SatBand::resized()
 FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcessor& p)
 : AudioProcessorEditor (&p), scope (p.getScopeFifo()), apvts (p.getAPVTS())
 {
-    setLookAndFeel (&lnf);
+    juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
     logo.setFont (juce::FontOptions (20).withStyle ("Bold"));
     logo.setColour (juce::Label::textColourId, juce::Colours::black);
     logo.setJustificationType (juce::Justification::centred);
@@ -275,25 +198,31 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
 
     setResizable (true, true);
     setResizeLimits (1000, 550, 2400, 1200);
-    setSize (1100, 600);
+    setSize (1400, 600);
     startTimerHz (30);
 }
 
-FlowFormAudioProcessorEditor::~FlowFormAudioProcessorEditor() { setLookAndFeel (nullptr); }
+FlowFormAudioProcessorEditor::~FlowFormAudioProcessorEditor() { juce::LookAndFeel::setDefaultLookAndFeel (nullptr); }
 
 void FlowFormAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat();
-    g.setGradientFill (juce::ColourGradient (juce::Colour::fromRGB (30,30,35), r.getCentreX(), r.getY(),
-                                              juce::Colour::fromRGB (10,10,12), r.getCentreX(), r.getBottom(), false));
-    g.fillAll();
-    g.setColour (accent().withAlpha (0.05f));
-    g.drawRect (getLocalBounds(), 1);
+    g.fillAll (juce::Colour (DigitalCapersLNF::COL_BG));
+
+    // Top bar
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_TOPBAR_BG));
+    g.fillRect (0, 0, getWidth(), 48);
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_PANEL_BORDER));
+    g.drawLine (0, 48, getWidth(), 48, 1.0f);
+
+    // Plugin name
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_TEXT));
+    g.setFont (juce::FontOptions (14.0f).withStyle ("Bold"));
+    g.drawText ("FlowForm", 16, 0, 120, 48, juce::Justification::centredLeft);
 }
 
 void FlowFormAudioProcessorEditor::resized()
 {
-    auto r = getLocalBounds().reduced (12);
+    auto r = getLocalBounds().withTrimmedTop (48).reduced (12);
     if (r.getWidth() < 1000) return;
 
     // Header

@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "ScopeComponent.h"
+#include "DigitalCapersLNF.h"
 
 //==============================================================================
 class FlowFormAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -22,19 +23,7 @@ private:
     using CAttach = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     // ===== Look and Feel =====
-    struct BlueSteelLNF : public juce::LookAndFeel_V4
-    {
-        BlueSteelLNF();
-        void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h,
-                               float pos, float startA, float endA, juce::Slider&) ;
-        void drawComboBox (juce::Graphics&, int w, int h, bool,
-                           int, int, int, int, juce::ComboBox&) ;
-        void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
-                                   bool, bool) ;
-        void drawLinearSlider (juce::Graphics&, int x, int y, int w, int h,
-                               float pos, float min, float max,
-                               int, juce::Slider&) ;
-    } lnf;
+        DigitalCapersLNF lnf;
 
     // ===== Helpers =====
     static juce::Colour accent() { return juce::Colour::fromRGB (0, 191, 255); }

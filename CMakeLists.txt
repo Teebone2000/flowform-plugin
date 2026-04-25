@@ -47,6 +47,11 @@ target_compile_definitions(FlowForm PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
+target_include_directories(FlowForm PRIVATE
+    "${CMAKE_SOURCE_DIR}/Source"
+    "/Users/invisible/Shared"
+)
+
 target_link_libraries(FlowForm PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp

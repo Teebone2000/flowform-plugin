@@ -332,7 +332,9 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
 if (hardBypass)
     {
-        for (int i = 0; i < n; ++i) { outL[i] = inL[i]; outR[i] = inL[i]; }
+        auto* dryL = dryBuf.getReadPointer (0);
+        auto* dryR = dryBuf.getReadPointer (1);
+        for (int i = 0; i < n; ++i) { outL[i] = dryL[i]; outR[i] = dryR[i]; }
         return;
     }
     if (auditionMode == 2)

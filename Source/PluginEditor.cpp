@@ -76,12 +76,13 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
 : AudioProcessorEditor (&p), scope (p.getScopeFifo()), apvts (p.getAPVTS())
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&lnf);
-    logo.setFont (juce::FontOptions (20).withStyle ("Bold"));
-    logo.setColour (juce::Label::textColourId, juce::Colour (DigitalCapersLNF::COL_ACCENT));
-    logo.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (logo);
+    logo.setVisible (false);  // drawn manually in paint() as a FLOWFORM badge
     addAndMakeVisible (presetBox); addAndMakeVisible (oversampleBox);
     addAndMakeVisible (abButton); addAndMakeVisible (undoBtn); addAndMakeVisible (redoBtn);
+    undoBtn.setButtonText ("Undo");
+    redoBtn.setButtonText ("Redo");
+    bypassBtn.setButtonText ("Hard Bypass");
+    compBtn.setButtonText ("Compensate");
     addAndMakeVisible (bypassBtn); addAndMakeVisible (deltaBtn); addAndMakeVisible (compBtn);
     addAndMakeVisible (scope);
     scopeToggleBtn.setButtonText ("W");
@@ -167,7 +168,7 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     styleLabel (masterTitle, 10); addAndMakeVisible (masterTitle);
     addKnob (masterMTrim, masterMTrimLbl, 36); addKnob (masterHarmonics, masterHarmonicsLbl, 36);
     addKnob (masterShape, masterShapeLbl, 36); addKnob (masterDepth, masterDepthLbl, 36);
-    styleFader (masterMix); addAndMakeVisible (masterMix); addLabel (masterMixLbl);
+    addKnob (masterMix, masterMixLbl, 36);
     addKnob (masterOutTrim, masterOutTrimLbl, 36);
     addToggle (masterOnBtn); addToggle (masterSoloBtn); addToggle (masterDeltaBtn);
     aMasterMTrim = std::make_unique<SAttach> (apvts, "masterMTrim", masterMTrim);
@@ -232,12 +233,26 @@ void FlowFormAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (juce::Colour (DigitalCapersLNF::COL_PANEL_BORDER));
     g.drawLine (0.0f, (float) topH, (float) getWidth(), (float) topH, 1.0f);
 
-    // Plugin name in top bar
-    g.setColour (juce::Colour (DigitalCapersLNF::COL_TEXT));
-    g.setFont (juce::FontOptions (14.0f * zoomFactor).withStyle ("Bold"));
-    g.drawText ("FlowForm",
-                juce::roundToInt (16 * zoomFactor), 0,
-                juce::roundToInt (120 * zoomFactor), topH,
+    // ── FLOWFORM badge ─────────────────────────────────────────────────────────
+    const float bx = 10.0f * zoomFactor, bh = 32.0f * zoomFactor;
+    const float by = (topH - bh) * 0.5f,  bw = 120.0f * zoomFactor;
+    auto badge = juce::Rectangle<float> (bx, by, bw, bh);
+    g.setColour (juce::Colour (0xff0d1117));
+    g.fillRoundedRectangle (badge, 5.0f * zoomFactor);
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT));
+    g.drawRoundedRectangle (badge, 5.0f * zoomFactor, 1.5f);
+    g.setColour (juce::Colours::white);
+    g.setFont (juce::FontOptions (15.0f * zoomFactor).withStyle ("Bold"));
+    g.drawText ("FLOWFORM", badge.toNearestInt(), juce::Justification::centred);
+
+    // "by Digital Capers" subtitle
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_LABEL));
+    g.setFont (juce::FontOptions (9.5f * zoomFactor));
+    g.drawText ("by Digital Capers",
+                juce::roundToInt ((bx + bw + 10.0f * zoomFactor)),
+                juce::roundToInt (by + bh * 0.25f),
+                juce::roundToInt (140.0f * zoomFactor),
+                juce::roundToInt (bh * 0.5f),
                 juce::Justification::centredLeft);
 }
 
@@ -251,17 +266,20 @@ void FlowFormAudioProcessorEditor::resized()
 
     // Header
     auto hdr = r.removeFromTop (z (30));
-    logo.setBounds (hdr.removeFromLeft (z (140)).reduced (z (4), z (2)));
-    auto ctr = hdr.removeFromLeft (z (280));
+    hdr.removeFromLeft (z (280));   // badge + subtitle drawn in paint() — reserve space only
+    auto ctr = hdr.removeFromLeft (z (260));
     auto abR = ctr.removeFromTop (z (18)).reduced (0, z (1));
-    undoBtn.setBounds (abR.removeFromLeft (z (28))); redoBtn.setBounds (abR.removeFromLeft (z (28)));
-    abButton.setBounds (abR.removeFromLeft (z (30))); presetBox.setBounds (abR.removeFromLeft (z (100)));
-    oversampleBox.setBounds (abR.removeFromLeft (z (50)));
-    auto rt = hdr.removeFromRight (z (240));
-    bypassBtn.setBounds (rt.removeFromLeft (z (55))); deltaBtn.setBounds (rt.removeFromLeft (z (35)));
-    compBtn.setBounds (rt.removeFromLeft (z (55)));
-    rt.removeFromLeft (z (8));
-    zoomBox.setBounds (rt.removeFromLeft (z (70)));
+    undoBtn.setBounds (abR.removeFromLeft (z (46))); redoBtn.setBounds (abR.removeFromLeft (z (46)));
+    abButton.setBounds (abR.removeFromLeft (z (28)));
+    abR.removeFromLeft (z (28));  // reserve space for B button (state implicit in abButton toggle)
+    presetBox.setBounds (abR.removeFromLeft (z (110)));
+    oversampleBox.setBounds (abR.removeFromLeft (z (46)));
+    // Right controls
+    auto rt = hdr.removeFromRight (z (360));
+    zoomBox.setBounds    (rt.removeFromLeft (z (62)));  rt.removeFromLeft (z (6));
+    bypassBtn.setBounds  (rt.removeFromLeft (z (90)));  rt.removeFromLeft (z (4));
+    deltaBtn.setBounds   (rt.removeFromLeft (z (52)));  rt.removeFromLeft (z (4));
+    compBtn.setBounds    (rt.removeFromLeft (z (95)));
     r.removeFromTop (z (4));
     auto scopeArea = r.removeFromTop (z (160));
     scope.setBounds (scopeArea);
@@ -282,12 +300,12 @@ void FlowFormAudioProcessorEditor::resized()
         l2.setBounds (rw.removeFromTop (lh)); s2.setBounds (rw);
     };
 
-    // Panels
+    // Panels — widths to match Figma (INPUT:168 COMP:200 SAT:420 LIM:180 MASTER:168 CLIP:remainder)
     auto p = r;
     const int gap = z (6);
-    int pw[6] = { z (168), z (260), z (470), z (184), z (112), 0 };
+    int pw[6] = { z (168), z (200), z (420), z (180), z (168), 0 };
     pw[5] = p.getWidth() - pw[0] - pw[1] - pw[2] - pw[3] - pw[4] - 5 * gap;
-    if (pw[5] < z (80)) pw[5] = z (80);
+    if (pw[5] < z (100)) pw[5] = z (100);
 
     // ── Input ────────────────────────────────────────────────────────────────
     auto pr = p.removeFromLeft (pw[0]); p.removeFromLeft (gap);
@@ -352,16 +370,36 @@ void FlowFormAudioProcessorEditor::resized()
       limitOnBtn.setBounds    (btnCol.removeFromTop (z (22))); btnCol.removeFromTop (z (3));
       limitSoloBtn.setBounds  (btnCol.removeFromTop (z (22))); btnCol.removeFromTop (z (3));
       limitDeltaBtn.setBounds (btnCol.removeFromTop (z (22))); }
-    pr.removeFromTop (z (12));
-    { auto kw = pr.removeFromTop (z (86));
-      int  ks = juce::jmin (kw.getHeight(), z (80));
+    pr.removeFromTop (z (4));
+    // LIM GR meter placeholder (drawn as a thin dark rect — actual meter is F3 future work)
+    pr.removeFromTop (z (18));   // space for "LIM GR" label + meter bar
+    pr.removeFromTop (z (16));   // space for "INPUT"  label + meter bar
+    pr.removeFromTop (z (6));
+    // CEILING — large, centred
+    { auto kw = pr.removeFromTop (z (80));
+      int  ks = juce::jmin (kw.getHeight(), z (70));
+      limitCeilingLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
+      limitCeiling.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
+    pr.removeFromTop (z (6));
+    // ATTACK + RELEASE side by side
+    { auto row = pr.removeFromTop (z (72));
+      int  hf  = row.getWidth() / 2;
+      auto lr  = row.removeFromLeft (hf);
+      int  ks  = z (52);
+      limitAttackLbl.setBounds  (lr.removeFromTop (z (11)));  limitAttack.setBounds  (lr.withSizeKeepingCentre (ks, ks - z(4)));
+      limitReleaseLbl.setBounds (row.removeFromTop (z (11))); limitRelease.setBounds (row.withSizeKeepingCentre (ks, ks - z(4))); }
+    pr.removeFromTop (z (8));
+    // THRESHOLD — large, centred
+    { auto kw = pr.removeFromTop (z (80));
+      int  ks = juce::jmin (kw.getHeight(), z (70));
       limitThreshLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
       limitThresh.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
-    pr.removeFromTop (z (16));
-    { auto kw = pr.removeFromTop (z (74));
-      int  ks = juce::jmin (kw.getHeight(), z (62));
-      limitReleaseLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
-      limitRelease.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
+    pr.removeFromTop (z (6));
+    // GAIN — medium, centred
+    { auto kw = pr.removeFromTop (z (66));
+      int  ks = juce::jmin (kw.getHeight(), z (56));
+      limitGainLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
+      limitGain.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
 
     // ── Master ───────────────────────────────────────────────────────────────
     pr = p.removeFromLeft (pw[4]); p.removeFromLeft (gap);
@@ -371,11 +409,27 @@ void FlowFormAudioProcessorEditor::resized()
       masterOnBtn.setBounds    (btnCol.removeFromTop (z (22))); btnCol.removeFromTop (z (3));
       masterSoloBtn.setBounds  (btnCol.removeFromTop (z (22))); btnCol.removeFromTop (z (3));
       masterDeltaBtn.setBounds (btnCol.removeFromTop (z (22))); }
-    pr.removeFromTop (z (16));
-    { auto kw = pr.removeFromTop (z (90));
-      int  ks = juce::jmin (kw.getHeight(), z (80));
-      masterOutTrimLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
-      masterOutTrim.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
+    pr.removeFromTop (z (6));
+    // Row 1: MASTER TRIM + HARMONICS
+    { auto row = pr.removeFromTop (z (66));
+      int hf = row.getWidth() / 2;  int ks = z (46);
+      auto lr = row.removeFromLeft (hf);
+      masterMTrimLbl.setBounds    (lr.removeFromTop  (z (11))); masterMTrim.setBounds      (lr.withSizeKeepingCentre (ks, ks - z(4)));
+      masterHarmonicsLbl.setBounds (row.removeFromTop (z (11))); masterHarmonics.setBounds (row.withSizeKeepingCentre (ks, ks - z(4))); }
+    pr.removeFromTop (z (6));
+    // Row 2: SHAPE + DEPTH
+    { auto row = pr.removeFromTop (z (66));
+      int hf = row.getWidth() / 2;  int ks = z (46);
+      auto lr = row.removeFromLeft (hf);
+      masterShapeLbl.setBounds (lr.removeFromTop  (z (11))); masterShape.setBounds (lr.withSizeKeepingCentre (ks, ks - z(4)));
+      masterDepthLbl.setBounds (row.removeFromTop (z (11))); masterDepth.setBounds (row.withSizeKeepingCentre (ks, ks - z(4))); }
+    pr.removeFromTop (z (6));
+    // Row 3: GLOBAL MIX (fader) + OUTPUT TRIM
+    { auto row = pr.removeFromTop (z (66));
+      int hf = row.getWidth() / 2;  int ks = z (46);
+      auto lr = row.removeFromLeft (hf);
+      masterMixLbl.setBounds    (lr.removeFromTop  (z (11))); masterMix.setBounds    (lr.withSizeKeepingCentre (ks, ks - z(4)));
+      masterOutTrimLbl.setBounds (row.removeFromTop (z (11))); masterOutTrim.setBounds (row.withSizeKeepingCentre (ks, ks - z(4))); }
 
     // ── Clipper ──────────────────────────────────────────────────────────────
     pr = p.removeFromLeft (pw[5]);

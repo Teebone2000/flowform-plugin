@@ -46,8 +46,8 @@ private:
     // ===== Input Panel =====
     juce::Label inTitle { {}, "INPUT" };
     juce::Slider inTrim, inHPF, inLPF, inVoice, inBias;
-    juce::Label inTrimLbl { {}, "TRIM" }, inHPFLbl { {}, "LO-PASS" },
-                inLPFLbl { {}, "HI-PASS" }, inVoiceLbl { {}, "VOICE" }, inBiasLbl { {}, "BIAS" };
+    juce::Label inTrimLbl { {}, "TRIM" }, inHPFLbl { {}, "HIGH PASS" },
+                inLPFLbl { {}, "LOW PASS" }, inVoiceLbl { {}, "VOICE" }, inBiasLbl { {}, "BIAS" };
     juce::ToggleButton inMonoBtn { "MONO" }, inPolarBtn { "Ø" },
                        inDeltaBtn { "Δ" }, inCompBtn { "COMP" };
     std::unique_ptr<SAttach> aInTrim, aInHPF, aInLPF, aInVoice, aInBias;

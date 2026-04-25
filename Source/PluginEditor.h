@@ -48,7 +48,7 @@ private:
     juce::Label logo { {}, "DIGITAL CAPERS" };
     juce::ComboBox presetBox, oversampleBox;
     juce::TextButton abButton { "A" }, undoBtn { "←" }, redoBtn { "→" };
-    juce::TextButton bypassBtn { "BYPASS" }, deltaBtn { "Δ" }, compBtn { "COMP" };
+    juce::ToggleButton bypassBtn { "BYPASS" }, deltaBtn { "Δ" }, compBtn { "COMP" };
 
     // ===== Scope =====
     ScopeComponent scope;
@@ -135,6 +135,7 @@ private:
     juce::ToggleButton clipOnBtn { "ON" }, clipSoloBtn { "SOLO" }, clipDeltaBtn { "Δ" };
     std::unique_ptr<SAttach> aClipDrive, aClipSoft, aClipLink;
     std::unique_ptr<BAttach> aClipOn, aClipSolo, aClipDelta;
+    std::unique_ptr<BAttach> aBypass, aGlobalDelta, aGlobalComp;
 
     // A/B state
     int currentAB = 0; // 0 = A, 1 = B

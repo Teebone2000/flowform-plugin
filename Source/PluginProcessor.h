@@ -189,6 +189,14 @@ private:
     bool hardBypass = false;
 
     // Scope
+    // Level compensation
+    bool  compActive = false;
+    float compGain = 1.0f;
+    float inputRMS = 0.0f;
+    float outputRMS = 0.0f;
+    float rmsCoeff = 0.0f;  // 300ms window
+    
+    // Scope
     ScopeFifo scopeFifo;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FlowFormAudioProcessor)

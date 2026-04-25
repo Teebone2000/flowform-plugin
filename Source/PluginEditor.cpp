@@ -265,6 +265,10 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     aClipSolo = std::make_unique<BAttach> (apvts, "clipSolo", clipSoloBtn);
     aClipDelta = std::make_unique<BAttach> (apvts, "clipDelta", clipDeltaBtn);
 
+    aBypass = std::make_unique<BAttach> (apvts, "bypass", bypassBtn);
+    aGlobalDelta = std::make_unique<BAttach> (apvts, "deltaGlob", deltaBtn);
+    aGlobalComp = std::make_unique<BAttach> (apvts, "compGlob", compBtn);
+
     setResizable (true, true);
     setResizeLimits (1200, 600, 2400, 1200);
     setSize (1200, 650);

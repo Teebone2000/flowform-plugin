@@ -150,6 +150,12 @@ void FlowFormAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     limiter.prepare (inSpec);
     clipper.prepare (inSpec);
 
+    // Level compensation: 500ms RMS window
+    compActive = false;
+    compGain = 1.0f;
+    rmsCoeff = std::exp (-1000.0f / (500.0f * (float) sampleRate));
+    inputRMS = 0.0f;
+    outputRMS = 0.0f;
     scopeFifo.reset();
 }
 
@@ -184,6 +190,7 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     const bool clipDelta  = getB (ParamIDs::clipDelta);
 
     hardBypass = getB (ParamIDs::bypass);
+    compActive = getB (ParamIDs::compGlob);
 
     int modes[6] = {
         inDelta ? 2 : 0,
@@ -287,7 +294,43 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     // Delta/solo/hard bypass
-    if (hardBypass)
+    
+    // ===== LEVEL COMPENSATION =====
+    // Compute RMS of input vs output, apply make-up gain
+    if (compActive)
+    {
+        float rmsIn = 0.0f, rmsOut = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            rmsIn  += dryBuf.getSample (0,i) * dryBuf.getSample (0,i)
+                    + dryBuf.getSample (1,i) * dryBuf.getSample (1,i);
+            rmsOut += buffer.getSample (0,i) * buffer.getSample (0,i)
+                    + buffer.getSample (1,i) * buffer.getSample (1,i);
+        }
+        rmsIn  = std::sqrt (rmsIn / (float) (n * 2));
+        rmsOut = std::sqrt (rmsOut / (float) (n * 2));
+
+        // Smooth with envelope follower
+        inputRMS  = rmsCoeff * inputRMS  + (1.0f - rmsCoeff) * rmsIn;
+        outputRMS = rmsCoeff * outputRMS + (1.0f - rmsCoeff) * rmsOut;
+
+        if (outputRMS > 0.001f)
+            compGain = inputRMS / outputRMS;
+        else
+            compGain = 1.0f;
+
+        // Clamp to ±24dB to avoid absurd values
+        compGain = juce::jlimit (0.063f, 15.849f, compGain);
+
+        // Apply compensation gain to processed output
+        for (int i = 0; i < n; ++i)
+        {
+            buffer.setSample (0, i, buffer.getSample (0,i) * compGain);
+            buffer.setSample (1, i, buffer.getSample (1,i) * compGain);
+        }
+    }
+
+if (hardBypass)
     {
         for (int i = 0; i < n; ++i) { outL[i] = inL[i]; outR[i] = inL[i]; }
         return;

@@ -21,7 +21,10 @@ class ScopeComponent : public juce::Component
 public:
     ScopeComponent (ScopeFifo& f) : fifo (f) {}
     void paint (juce::Graphics&) override;
+    void setShowScope (bool show) { showScope = show; repaint(); }
+    bool getShowScope() const noexcept { return showScope; }
 private:
     ScopeFifo& fifo;
+    bool showScope = true;
     std::array<float, ScopeFifo::cap> inL {}, inR {}, dL {}, dR {};
 };

@@ -161,6 +161,10 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     addAndMakeVisible (abButton); addAndMakeVisible (undoBtn); addAndMakeVisible (redoBtn);
     addAndMakeVisible (bypassBtn); addAndMakeVisible (deltaBtn); addAndMakeVisible (compBtn);
     addAndMakeVisible (scope);
+    scopeToggleBtn.setButtonText ("W");
+    scopeToggleBtn.setClickingTogglesState (true);
+    scopeToggleBtn.onClick = [this] { scope.setShowScope (! scope.getShowScope()); };
+    addAndMakeVisible (scopeToggleBtn);
 
     auto addKnob = [&] (juce::Slider& s, juce::Label& l, int sz) { styleKnob (s, sz); styleLabel (l, 8); addAndMakeVisible (s); addAndMakeVisible (l); };
     auto addToggle = [&] (juce::ToggleButton& b) { addAndMakeVisible (b); };
@@ -304,7 +308,9 @@ void FlowFormAudioProcessorEditor::resized()
     bypassBtn.setBounds (rt.removeFromLeft (55)); deltaBtn.setBounds (rt.removeFromLeft (35));
     compBtn.setBounds (rt.removeFromLeft (55));
     r.removeFromTop (4);
-    scope.setBounds (r.removeFromTop (160));
+    auto scopeArea = r.removeFromTop (160);
+    scope.setBounds (scopeArea);
+    scopeToggleBtn.setBounds (scopeArea.removeFromRight (40).removeFromTop (20));
     r.removeFromTop (4);
 
     // Panels

@@ -30,6 +30,8 @@ int ScopeFifo::pull (float* outL, float* outR, float* outDL, float* outDR, int m
     return count;
 }
 
+static juce::Colour accent() { return juce::Colour::fromRGB (0, 191, 255); }
+
 void ScopeComponent::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (4.0f);
@@ -37,39 +39,57 @@ void ScopeComponent::paint (juce::Graphics& g)
     g.setColour (juce::Colours::black.withAlpha (0.65f));
     g.fillRoundedRectangle (r, 8.0f);
 
+    if (! showScope)
+    {
+        g.setColour (accent().withAlpha (0.3f));
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawFittedText ("Scope Off", r.toNearestInt(), juce::Justification::centred, 1);
+        return;
+    }
+
     const int n = fifo.pull (inL.data(), inR.data(), dL.data(), dR.data(), (int) inL.size());
     if (n <= 4) return;
 
     auto plot = r.reduced (8.0f);
     auto midY = plot.getCentreY();
 
-    // Centre line
     g.setColour (juce::Colours::white.withAlpha (0.04f));
     g.drawLine (plot.getX(), midY, plot.getRight(), midY, 1.0f);
 
-    // Input waveform
-    juce::Path path;
+    // Dry (input) — neutral white/grey
+    juce::Path dryPath;
     for (int i = 0; i < n; ++i)
     {
         float t = (float) i / (float) (n - 1);
         float x = plot.getX() + t * plot.getWidth();
         float y = midY - juce::jlimit (-1.0f, 1.0f, inL[i]) * (plot.getHeight() * 0.42f);
-        if (i == 0) path.startNewSubPath (x, y);
-        else        path.lineTo (x, y);
+        if (i == 0) dryPath.startNewSubPath (x, y); else dryPath.lineTo (x, y);
     }
-    g.setColour (juce::Colour::fromRGB (0, 191, 255).withAlpha (0.55f));
-    g.strokePath (path, juce::PathStrokeType (1.6f));
+    g.setColour (juce::Colours::white.withAlpha (0.20f));
+    g.strokePath (dryPath, juce::PathStrokeType (1.0f));
 
-    // Delta waveform
+    // Wet (processed = input + delta) — accent electric blue
+    juce::Path wetPath;
+    for (int i = 0; i < n; ++i)
+    {
+        float t = (float) i / (float) (n - 1);
+        float x = plot.getX() + t * plot.getWidth();
+        float wet = inL[i] + dL[i];
+        float y = midY - juce::jlimit (-1.0f, 1.0f, wet) * (plot.getHeight() * 0.42f);
+        if (i == 0) wetPath.startNewSubPath (x, y); else wetPath.lineTo (x, y);
+    }
+    g.setColour (accent().withAlpha (0.65f));
+    g.strokePath (wetPath, juce::PathStrokeType (1.6f));
+
+    // Delta envelope (thin, shows what changed)
     juce::Path dPath;
     for (int i = 0; i < n; ++i)
     {
         float t = (float) i / (float) (n - 1);
         float x = plot.getX() + t * plot.getWidth();
-        float y = midY - juce::jlimit (-1.0f, 1.0f, dL[i] * 2.0f) * (plot.getHeight() * 0.42f);
-        if (i == 0) dPath.startNewSubPath (x, y);
-        else        dPath.lineTo (x, y);
+        float y = midY - juce::jlimit (-1.0f, 1.0f, dL[i] * 2.0f) * (plot.getHeight() * 0.35f);
+        if (i == 0) dPath.startNewSubPath (x, y); else dPath.lineTo (x, y);
     }
-    g.setColour (juce::Colours::white.withAlpha (0.35f));
-    g.strokePath (dPath, juce::PathStrokeType (1.0f));
+    g.setColour (juce::Colours::white.withAlpha (0.25f));
+    g.strokePath (dPath, juce::PathStrokeType (0.8f));
 }

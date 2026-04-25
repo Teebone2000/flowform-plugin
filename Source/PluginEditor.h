@@ -52,6 +52,7 @@ private:
 
     // ===== Scope =====
     ScopeComponent scope;
+    juce::TextButton scopeToggleBtn { "W" };
 
     // ===== Input Panel =====
     juce::Label inTitle { {}, "INPUT" };

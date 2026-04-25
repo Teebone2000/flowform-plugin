@@ -352,7 +352,15 @@ if (hardBypass)
     lufsIntegrated = lufsMeter.getIntegrated();
     lufsShortTerm  = lufsMeter.getShortTerm();
     lufsMaxMomentary = lufsMeter.getMaxMomentary();
-    scopeFifo.push (inL, outL, nullptr, nullptr, n);
+    // Compute delta array for scope
+    std::unique_ptr<float[]> deltaL (new float[(size_t) n]);
+    std::unique_ptr<float[]> deltaR (new float[(size_t) n]);
+    for (int i = 0; i < n; ++i)
+    {
+        deltaL[(size_t) i] = outL[i] - (inL ? inL[i] : 0.0f);
+        deltaR[(size_t) i] = outR[i] - (inL ? inL[i] : 0.0f);
+    }
+    scopeFifo.push (inL, outL, deltaL.get(), deltaR.get(), n);
 }
 
 //==============================================================================

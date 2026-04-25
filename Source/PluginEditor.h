@@ -35,7 +35,7 @@ private:
 
     // ===== Header =====
     juce::Label logo { {}, "DIGITAL CAPERS" };
-    juce::ComboBox presetBox, oversampleBox;
+    juce::ComboBox presetBox, oversampleBox, zoomBox;
     juce::TextButton abButton { "A" }, undoBtn { "←" }, redoBtn { "→" };
     juce::ToggleButton bypassBtn { "BYPASS" }, deltaBtn { "Δ" }, compBtn { "COMP" };
 
@@ -130,6 +130,10 @@ private:
     // A/B state
     int currentAB = 0; // 0 = A, 1 = B
 
+    float zoomFactor = 1.0f;
+    std::array<juce::Rectangle<int>, 6> panelBounds {};
+
+    void applyZoom (float z);
     void timerCallback() ;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FlowFormAudioProcessorEditor)

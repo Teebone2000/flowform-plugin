@@ -1,0 +1,5 @@
+build/
+FlowForm_artefacts/
+*.vst3
+*.component
+.DS_Store

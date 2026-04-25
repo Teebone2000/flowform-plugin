@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "ScopeComponent.h"
 #include "DigitalCapersLNF.h"
+#include "MeterComponents.h"
 
 //==============================================================================
 class FlowFormAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -17,6 +18,7 @@ public:
 
 private:
     using APVTS = FlowFormAudioProcessor::APVTS;
+    FlowFormAudioProcessor& audioProcessor;
     APVTS& apvts;
     using SAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
     using BAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -45,6 +47,9 @@ private:
 
     // ===== Input Panel =====
     juce::Label inTitle { {}, "INPUT" };
+    LedDot ovrLed, dynLed;
+    juce::Label ovrLbl { {}, "OVR" }, dynLbl { {}, "DYN" };
+    VerticalMeterBar inMeterL, inMeterR;
     juce::Slider inTrim, inHPF, inLPF, inVoice, inBias;
     juce::Label inTrimLbl { {}, "TRIM" }, inHPFLbl { {}, "HIGH PASS" },
                 inLPFLbl { {}, "LOW PASS" }, inVoiceLbl { {}, "VOICE" }, inBiasLbl { {}, "BIAS" };
@@ -54,6 +59,7 @@ private:
     std::unique_ptr<BAttach> aInMono, aInPolar, aInDelta, aInComp;
 
     // ===== Compressor Panel =====
+    CompCurveComponent compCurve;
     juce::Label compTitle { {}, "COMPRESSOR" };
     juce::Slider compSC, compThresh, compRatio, compAttack, compRelease, compMakeup, compStereo;
     juce::Label compSCLbl { {}, "S/C HPF" }, compThreshLbl { {}, "THRESH" },
@@ -68,6 +74,7 @@ private:
     std::unique_ptr<BAttach> aCompOn, aCompSolo, aCompDelta;
 
     // ===== Saturation Panel =====
+    SatWaveformComponent satWave;
     juce::Label satTitle { {}, "SATURATION" };
     juce::Slider x1, x2, x3;
     juce::Label x1Lbl { {}, "LOW\nSPLIT" }, x2Lbl { {}, "MID\nSPLIT" }, x3Lbl { {}, "HIGH\nSPLIT" };
@@ -98,6 +105,8 @@ private:
     std::array<std::unique_ptr<SatBand>, 4> satBands;
 
     // ===== Limiter Panel =====
+    HorizontalMeterBar limGRMeter, limInputMeter;
+    juce::Label limGRLbl { {}, "LIM GR" }, limInputLbl { {}, "INPUT" };
     juce::Label limitTitle { {}, "LIMITER" };
     juce::Slider limitThresh, limitGain, limitAttack, limitCeiling, limitRelease;
     juce::Label limitThreshLbl { {}, "THRESH" }, limitGainLbl { {}, "GAIN" },
@@ -108,6 +117,8 @@ private:
     std::unique_ptr<BAttach> aLimitOn, aLimitSolo, aLimitDelta;
 
     // ===== Master Panel =====
+    VerticalMeterBar masterMeterL, masterMeterR;
+    juce::Label masterDbScale;   // drawn in paint() — just reserve space
     juce::Label masterTitle { {}, "MASTER" };
     juce::Slider masterMTrim, masterHarmonics, masterShape, masterDepth, masterMix, masterOutTrim;
     juce::Label masterMTrimLbl { {}, "M TRIM" }, masterHarmonicsLbl { {}, "HARM" },
@@ -118,6 +129,9 @@ private:
     std::unique_ptr<BAttach> aMasterOn, aMasterSolo, aMasterDelta;
 
     // ===== Clipper Panel =====
+    // LUFS readouts
+    juce::Label lufsLongVal  { {}, "--.-" }, lufsShortVal { {}, "--.-" }, lufsInterVal { {}, "--.-" };
+    juce::Label lufsLongLbl  { {}, "LONG" }, lufsShortLbl { {}, "SHORT"}, lufsInterLbl { {}, "INTER"};
     juce::Label clipperTitle { {}, "CLIPPER" };
     juce::Slider clipDrive, clipSoftness, clipLink;
     juce::Label clipDriveLbl { {}, "DRIVE" }, clipSoftnessLbl { {}, "SOFT" },

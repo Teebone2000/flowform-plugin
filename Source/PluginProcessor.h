@@ -122,9 +122,11 @@ public:
     float getCompGR()    const noexcept { return compGR; }
     float getOutLevelL() const noexcept { return outLevelL; }
     float getOutLevelR() const noexcept { return outLevelR; }
-    float getLufsIntegrated() const noexcept { return lufsIntegrated; }
-    float getLufsShortTerm()  const noexcept { return lufsShortTerm; }
+    float getLufsIntegrated()   const noexcept { return lufsIntegrated; }
+    float getLufsShortTerm()    const noexcept { return lufsShortTerm; }
     float getLufsMaxMomentary() const noexcept { return lufsMaxMomentary; }
+    float getLimiterGR()        const noexcept { return limiter.getGainReduction(); }
+    float getLimiterInput()     const noexcept { return limiter.getInputLevel(); }
 
     // Audition state
     int  getAuditionSection() const noexcept { return auditionSection; }

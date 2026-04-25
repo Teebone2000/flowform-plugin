@@ -274,8 +274,8 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     aGlobalComp = std::make_unique<BAttach> (apvts, "compGlob", compBtn);
 
     setResizable (true, true);
-    setResizeLimits (1200, 600, 2400, 1200);
-    setSize (1200, 650);
+    setResizeLimits (1000, 550, 2400, 1200);
+    setSize (1100, 600);
     startTimerHz (30);
 }
 
@@ -294,7 +294,7 @@ void FlowFormAudioProcessorEditor::paint (juce::Graphics& g)
 void FlowFormAudioProcessorEditor::resized()
 {
     auto r = getLocalBounds().reduced (12);
-    if (r.getWidth() < 1200) return;
+    if (r.getWidth() < 1000) return;
 
     // Header
     auto hdr = r.removeFromTop (30);
@@ -310,7 +310,7 @@ void FlowFormAudioProcessorEditor::resized()
     r.removeFromTop (4);
     auto scopeArea = r.removeFromTop (160);
     scope.setBounds (scopeArea);
-    scopeToggleBtn.setBounds (scopeArea.removeFromRight (40).removeFromTop (20));
+    scopeToggleBtn.setBounds (scopeArea.getX() + scopeArea.getWidth() - 48, scopeArea.getY() + 2, 46, 20);
     r.removeFromTop (4);
 
     // Panels

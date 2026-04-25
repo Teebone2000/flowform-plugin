@@ -60,6 +60,7 @@ private:
 
     // ===== Compressor Panel =====
     CompCurveComponent compCurve;
+    HorizontalMeterBar compGRMeter;
     juce::Label compTitle { {}, "COMPRESSOR" };
     juce::Slider compSC, compThresh, compRatio, compAttack, compRelease, compMakeup, compStereo;
     juce::Label compSCLbl { {}, "S/C HPF" }, compThreshLbl { {}, "THRESH" },
@@ -129,6 +130,8 @@ private:
     std::unique_ptr<BAttach> aMasterOn, aMasterSolo, aMasterDelta;
 
     // ===== Clipper Panel =====
+    LedDot clpLed;
+    juce::Label clpLbl { {}, "CLP" }, stLbl { {}, "ST" };
     // LUFS readouts
     juce::Label lufsLongVal  { {}, "--.-" }, lufsShortVal { {}, "--.-" }, lufsInterVal { {}, "--.-" };
     juce::Label lufsLongLbl  { {}, "LONG" }, lufsShortLbl { {}, "SHORT"}, lufsInterLbl { {}, "INTER"};

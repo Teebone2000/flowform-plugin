@@ -118,11 +118,13 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
 
     // Compressor
     addAndMakeVisible (compCurve);
+    compGRMeter.isGainReduction = true;
+    addAndMakeVisible (compGRMeter);
     styleLabel (compTitle, 10); addAndMakeVisible (compTitle);
     addKnob (compSC, compSCLbl, 36); addKnob (compThresh, compThreshLbl, 36);
     addKnob (compRatio, compRatioLbl, 36); addKnob (compAttack, compAttackLbl, 36);
     addKnob (compRelease, compReleaseLbl, 36); addKnob (compMakeup, compMakeupLbl, 36);
-    styleFader (compStereo); addAndMakeVisible (compStereo); addLabel (compStereoLbl);
+    addKnob (compStereo, compStereoLbl, 36);  // stereo link as rotary knob
     addAndMakeVisible (compMS); addLabel (compMSLbl);
     addAndMakeVisible (compType); addLabel (compTypeLbl);
     addToggle (compOnBtn); addToggle (compSoloBtn); addToggle (compDeltaBtn);
@@ -195,7 +197,11 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     aMasterSolo = std::make_unique<BAttach> (apvts, "masterSolo", masterSoloBtn);
     aMasterDelta = std::make_unique<BAttach> (apvts, "masterDelta", masterDeltaBtn);
 
-    // Clipper
+    // Clipper — CLP/ST indicator
+    clpLed.onColour = juce::Colour (0xffef4444);
+    addAndMakeVisible (clpLed);
+    styleLabel (clpLbl, 7.5f); addAndMakeVisible (clpLbl);
+    styleLabel (stLbl,  7.5f); addAndMakeVisible (stLbl);
     // LUFS value labels — LCD-style readouts
     for (auto* l : { &lufsLongVal, &lufsShortVal, &lufsInterVal })
     {
@@ -325,9 +331,10 @@ void FlowFormAudioProcessorEditor::resized()
     compBtn.setBounds    (rt.removeFromLeft (z (95)));
     r.removeFromTop (z (4));
     auto scopeArea = r.removeFromTop (z (160));
-    scope.setBounds (scopeArea);
-    scopeToggleBtn.setBounds (scopeArea.getX() + scopeArea.getWidth() - z (48),
-                              scopeArea.getY() + z (2), z (46), z (20));
+    // Saturation waveform display occupies the full-width area (per new design)
+    satWave.setBounds (scopeArea.reduced (0, z (2)));
+    scope.setBounds ({});  // oscilloscope hidden — waveform replaces it
+    scopeToggleBtn.setBounds ({});
     r.removeFromTop (z (4));
 
     // Layout helper: two label+knob pairs side by side in 'grid'
@@ -412,7 +419,9 @@ void FlowFormAudioProcessorEditor::resized()
     inDeltaBtn.setBounds ({}); inCompBtn.setBounds ({});
 
     // ── Compressor ───────────────────────────────────────────────────────────
-    // On/Solo/Δ horizontal row; 3×2 knob grid; comp curve fills the rest
+    // Layout (per new design):
+    //   On/Solo/Δ row → GR meter → 2×3 knob grid (SC-HPF,StereoLink | Thresh,Ratio | Atk,Rel)
+    //   → dropdowns + Makeup knob → CompCurve fills rest
     pr = p.removeFromLeft (pw[1]); p.removeFromLeft (gap);
     panelBounds[1] = pr;
     compTitle.setBounds (pr.removeFromTop (z (14)));
@@ -421,30 +430,38 @@ void FlowFormAudioProcessorEditor::resized()
       compOnBtn.setBounds    (cb.removeFromLeft (bw3));
       compSoloBtn.setBounds  (cb.removeFromLeft (bw3));
       compDeltaBtn.setBounds (cb); }
-    auto cbot = pr.removeFromBottom (z (28));
-    { auto cl = cbot.removeFromLeft (cbot.getWidth() / 2);
-      compMSLbl.setBounds (cl.removeFromTop (z (10))); compMS.setBounds (cl);
-      compTypeLbl.setBounds (cbot.removeFromTop (z (10))); compType.setBounds (cbot); }
-    auto cslArea = pr.removeFromBottom (z (38));
-    compStereoLbl.setBounds (cslArea.removeFromTop (z (10))); compStereo.setBounds (cslArea);
-    // Knob rows  (leave bottom for comp curve)
-    int knobRowH = z (48);   // label(10) + knob(38)
-    auto cg = pr.removeFromTop (knobRowH * 3).reduced (z (1));
-    pp (cg, compSC,      compSCLbl,      compThresh,  compThreshLbl,  knobRowH);
-    pp (cg, compRatio,   compRatioLbl,   compAttack,  compAttackLbl,  knobRowH);
-    pp (cg, compRelease, compReleaseLbl, compMakeup,  compMakeupLbl,  knobRowH);
-    // Compression waveform — fills remaining space
+    pr.removeFromTop (z (3));
+    // GR meter (gain reduction, fills right-to-left in red with dB scale)
+    { compGRMeter.setBounds (pr.removeFromTop (z (14))); }
     pr.removeFromTop (z (4));
+    // 2×3 knob grid: SC-HPF | Stereo Link ; Thresh | Ratio ; Attack | Release
+    { int rowH = z (48);  // label(10) + knob(38)
+      auto cg  = pr.removeFromTop (rowH * 3).reduced (z (1));
+      pp (cg, compSC,      compSCLbl,      compStereo,  compStereoLbl,  rowH);
+      pp (cg, compThresh,  compThreshLbl,  compRatio,   compRatioLbl,   rowH);
+      pp (cg, compAttack,  compAttackLbl,  compRelease, compReleaseLbl, rowH); }
+    pr.removeFromTop (z (4));
+    // Bottom row: MS dropdown + Comp Type dropdown + Makeup knob
+    { auto bot = pr.removeFromBottom (z (52));
+      int hf = bot.getWidth() / 3;
+      auto dropcols = bot.removeFromLeft (hf * 2);
+      auto mc = dropcols.removeFromLeft (hf);
+      compMSLbl.setBounds   (mc.removeFromTop (z (10)));  compMS.setBounds   (mc.removeFromTop (z (18)));
+      compTypeLbl.setBounds (dropcols.removeFromTop (z (10))); compType.setBounds (dropcols.removeFromTop (z (18)));
+      compMakeupLbl.setBounds (bot.removeFromTop (z (10)));
+      compMakeup.setBounds    (bot.withSizeKeepingCentre (z (36), z (36))); }
+    // Hide stereo-link fader label (now a knob)
+    compStereoLbl.setText ("S.LINK", juce::dontSendNotification);
+    // Compression waveform — fills remaining space
     compCurve.setBounds (pr.reduced (z (2), 0));
 
     // ── Saturation ───────────────────────────────────────────────────────────
-    // Layout: title | On/Solo/Δ | split knobs | waveform display | 4 bands | mix fader
+    // Layout (per new design): title | split knobs | 4 band panels (flex-1)
+    //   | bottom section: SAT MIX fader + On/Solo/Δ
+    // (satWave is in the full-width area above, not inside this panel)
     pr = p.removeFromLeft (pw[2]); p.removeFromLeft (gap);
     panelBounds[2] = pr;
     satTitle.setBounds (pr.removeFromTop (z (14)));
-    { auto sb = pr.removeFromTop (z (16));
-      satOnBtn.setBounds (sb.removeFromLeft (z (26))); satSoloBtn.setBounds (sb.removeFromLeft (z (28)));
-      satDeltaBtn.setBounds (sb.removeFromLeft (z (22))); }
     // Split frequency knobs
     { auto xr = pr.removeFromTop (z (58));
       int xw = xr.getWidth() / 3;
@@ -454,17 +471,19 @@ void FlowFormAudioProcessorEditor::resized()
       x1Lbl.setBounds (x1r.removeFromTop (z (16))); x1.setBounds (x1r);
       x2Lbl.setBounds (x2r.removeFromTop (z (16))); x2.setBounds (x2r);
       x3Lbl.setBounds (x3r.removeFromTop (z (16))); x3.setBounds (x3r); }
-    // Mix fader at bottom
-    auto sbot = pr.removeFromBottom (z (28));
-    satMixFader.setBounds (sbot.reduced (z (8), z (2)));
-    // Band sub-panels
-    auto sbr = pr.removeFromBottom (juce::jmin (z (190), pr.getHeight() - z (44)));
-    int sw = (sbr.getWidth() - z (6)) / 4;
-    for (int i = 0; i < 4; ++i)
-        { satBands[(size_t)i]->setBounds (sbr.removeFromLeft (sw)); sbr.removeFromLeft (z (2)); }
-    // Saturation waveform display — fills remaining space between splits and bands
-    pr.removeFromTop (z (2));
-    satWave.setBounds (pr.reduced (z (2), 0));
+    // Bottom section: SAT MIX fader + On/Solo/Δ
+    { auto sbot = pr.removeFromBottom (z (38));
+      auto btnRow = sbot.removeFromBottom (z (18));
+      satOnBtn.setBounds    (btnRow.removeFromLeft (z (26)));
+      satSoloBtn.setBounds  (btnRow.removeFromLeft (z (28)));
+      satDeltaBtn.setBounds (btnRow.removeFromLeft (z (22)));
+      satMixFader.setBounds (sbot.reduced (z (8), z (2))); }
+    // 4 band sub-panels fill everything between splits and bottom section
+    { int bandH = pr.getHeight() - z (2);
+      auto sbr = pr.removeFromTop (juce::jmax (z (60), bandH));
+      int sw = (sbr.getWidth() - z (6)) / 4;
+      for (int i = 0; i < 4; ++i)
+          { satBands[(size_t)i]->setBounds (sbr.removeFromLeft (sw)); sbr.removeFromLeft (z (2)); } }
 
     // ── Limiter ──────────────────────────────────────────────────────────────
     // On/Solo/Δ horizontal row; LIM GR + INPUT horizontal meters; knobs below
@@ -516,12 +535,10 @@ void FlowFormAudioProcessorEditor::resized()
     pr = p.removeFromLeft (pw[4]); p.removeFromLeft (gap);
     panelBounds[4] = pr;
     masterTitle.setBounds (pr.removeFromTop (z (14)));
-    { auto btnRow = pr.removeFromTop (z (20));
-      int bw3 = btnRow.getWidth() / 3;
-      masterOnBtn.setBounds    (btnRow.removeFromLeft (bw3));
-      masterSoloBtn.setBounds  (btnRow.removeFromLeft (bw3));
-      masterDeltaBtn.setBounds (btnRow); }
-    pr.removeFromTop (z (4));
+    // No On/Solo/Δ buttons in Master per new design — hide them
+    masterOnBtn.setBounds ({});
+    masterSoloBtn.setBounds ({});
+    masterDeltaBtn.setBounds ({});
     // Tall vertical meters + dB scale — stored so paint() can draw the scale
     { auto mArea = pr.removeFromTop (z (140));
       // Meters centred, scale to the right of them
@@ -572,6 +589,14 @@ void FlowFormAudioProcessorEditor::resized()
       clipOnBtn.setBounds   (clb.removeFromLeft (bw3));
       clipSoloBtn.setBounds (clb.removeFromLeft (bw3));
       clipDeltaBtn.setBounds (clb); }
+    // CLP + ST indicator row
+    { auto indRow = pr.removeFromTop (z (16));
+      int hw = indRow.getWidth() / 2;
+      auto lhalf = indRow.removeFromLeft (hw);
+      clpLed.setBounds (lhalf.removeFromLeft (z (12)).withSizeKeepingCentre (z (10), z (10)));
+      clpLbl.setBounds (lhalf);
+      stLbl.setBounds  (indRow); }
+    pr.removeFromTop (z (3));
     clipDriveLbl.setBounds    (pr.removeFromTop (z (10))); clipDrive.setBounds    (pr.removeFromTop (z (48)));
     clipSoftnessLbl.setBounds (pr.removeFromTop (z (10))); clipSoftness.setBounds (pr.removeFromTop (z (48)));
     clipLinkLbl.setBounds     (pr.removeFromTop (z (10))); clipLink.setBounds     (pr.removeFromTop (z (48)));
@@ -610,15 +635,24 @@ void FlowFormAudioProcessorEditor::timerCallback()
     // DYN = compressor is actively reducing gain (> 0.5 dB)
     dynLed.setLit (audioProcessor.getCompGR() < -0.5f);
 
+    // ── Compressor GR meter ───────────────────────────────────────────────────
+    compGRMeter.setGainReductionDb (audioProcessor.getCompGR());
+
     // ── Limiter meters ────────────────────────────────────────────────────────
     limGRMeter.setGainReductionDb (audioProcessor.getLimiterGR());
     // Input to limiter ≈ output level from compressor — use inLevel as proxy
     limInputMeter.setLevel ((std::abs (inL) + std::abs (inR)) * 0.5f);
 
     // ── Master meters ─────────────────────────────────────────────────────────
-    masterMeterL.setLevel (audioProcessor.getOutLevelL());
-    masterMeterR.setLevel (audioProcessor.getOutLevelR());
-    repaint (masterDbScale.getBounds());  // refresh dB scale text area
+    {
+        float outL = audioProcessor.getOutLevelL();
+        float outR = audioProcessor.getOutLevelR();
+        masterMeterL.setLevel (outL);
+        masterMeterR.setLevel (outR);
+        repaint (masterDbScale.getBounds());  // refresh dB scale text area
+        // CLP led — lit when output is at or beyond digital ceiling
+        clpLed.setLit (outL > 0.99f || outR > 0.99f);
+    }
 
     // ── Compression waveform ──────────────────────────────────────────────────
     {

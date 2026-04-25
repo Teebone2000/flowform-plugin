@@ -36,6 +36,10 @@ void HarmonicProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 
 void HarmonicProcessor::process(juce::AudioBuffer<float>& buffer)
 {
+    // Pass through if no harmonics active
+    if (harmonics < 0.5f && globalMix < 0.5f)
+        return;
+    
     const auto numSamples = buffer.getNumSamples();
     const auto numChannels = buffer.getNumChannels();
     

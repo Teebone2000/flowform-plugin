@@ -35,10 +35,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout FlowFormAudioProcessor::crea
 
     // Compressor
     addF (ParamIDs::compSC,     "SC HPF (Hz)",  { 20.0f, 500.0f, 0.01f, 0.35f }, 90.0f);
-    addF (ParamIDs::compThresh, "Threshold (dB)",{ -40.0f, 0.0f, 0.01f }, -19.4f);
-    addF (ParamIDs::compRatio,  "Ratio",         { 1.0f, 20.0f, 0.01f }, 1.81f);
-    addF (ParamIDs::compAttack, "Attack (ms)",   { 0.1f, 100.0f, 0.01f, 0.35f }, 6.3f);
-    addF (ParamIDs::compRelease,"Release (ms)",  { 10.0f, 1000.0f, 0.01f, 0.35f }, 163.7f);
+    addF (ParamIDs::compThresh, "Threshold (dB)",{ -40.0f, 0.0f, 0.01f }, 0.0f);
+    addF (ParamIDs::compRatio,  "Ratio",         { 1.0f, 20.0f, 0.01f }, 1.0f);
+    addF (ParamIDs::compAttack, "Attack (ms)",   { 0.1f, 100.0f, 0.01f, 0.35f }, 1.0f);
+    addF (ParamIDs::compRelease,"Release (ms)",  { 10.0f, 1000.0f, 0.01f, 0.35f }, 80.0f);
     addF (ParamIDs::compMakeup, "Makeup (dB)",   { -12.0f, 12.0f, 0.01f }, 0.0f);
     addF (ParamIDs::compStereo, "Stereo Link",   { 0.0f, 1.0f, 0.001f }, 1.0f);
     addC (ParamIDs::compMS,    "M/S Mode",       { "Stereo", "Mid", "Side", "M>S", "S>M" }, 0);
@@ -58,7 +58,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FlowFormAudioProcessor::crea
 
     // 4 saturation bands (per blueprint: Tube, Tape, Solid-State, Transformer)
     static const char* algoNames[] = { "Tube", "Tape", "Solid-State", "Transformer" };
-    static float defDrives[] = { 22.9f, 22.0f, 23.1f, 18.0f };
+    static float defDrives[] = { 0.0f, 0.0f, 0.0f, 0.0f };
     for (int b = 0; b < 4; ++b)
     {
         addF (bnd (b, ParamIDs::driveDb).toRawUTF8(), ("Band " + String(b) + " Drive").toRawUTF8(),
@@ -68,37 +68,37 @@ juce::AudioProcessorValueTreeState::ParameterLayout FlowFormAudioProcessor::crea
         addF (bnd (b, ParamIDs::msFocus).toRawUTF8(), ("Band " + String(b) + " M/S").toRawUTF8(),
               { -100.0f, 100.0f, 0.1f }, 0.0f);
         addC (bnd (b, ParamIDs::algo).toRawUTF8(), ("Band " + String(b) + " Algo").toRawUTF8(),
-              { "Tube", "Tape", "Solid-State", "Transformer" }, 0);
+              { "Tube", "Tape", "Solid-State", "Transformer" }, 3);
         addB (bnd (b, ParamIDs::on).toRawUTF8(),    ("Band " + String(b) + " On").toRawUTF8(), true);
         addB (bnd (b, ParamIDs::solo).toRawUTF8(),  ("Band " + String(b) + " Solo").toRawUTF8(), false);
         addB (bnd (b, ParamIDs::delta).toRawUTF8(), ("Band " + String(b) + " Delta").toRawUTF8(), false);
     }
 
     // Limiter
-    addF (ParamIDs::limitThresh,  "Lim Thresh (dB)", { -40.0f, 0.0f, 0.01f }, -8.0f);
-    addF (ParamIDs::limitGain,    "Lim Gain (dB)",   { -12.0f, 12.0f, 0.01f }, 3.0f);
-    addF (ParamIDs::limitAttack,  "Lim Attack (ms)", { 0.01f, 10.0f, 0.001f, 0.35f }, 1.5f);
+    addF (ParamIDs::limitThresh,  "Lim Thresh (dB)", { -40.0f, 0.0f, 0.01f }, 0.0f);
+    addF (ParamIDs::limitGain,    "Lim Gain (dB)",   { -12.0f, 12.0f, 0.01f }, 0.0f);
+    addF (ParamIDs::limitAttack,  "Lim Attack (ms)", { 0.01f, 10.0f, 0.001f, 0.35f }, 0.1f);
     addF (ParamIDs::limitCeiling, "Lim Ceiling (dB)",{ -3.0f, 0.0f, 0.01f }, 0.0f);
-    addF (ParamIDs::limitRelease, "Lim Release (ms)",{ 10.0f, 500.0f, 0.1f, 0.35f }, 59.0f);
+    addF (ParamIDs::limitRelease, "Lim Release (ms)",{ 10.0f, 500.0f, 0.1f, 0.35f }, 150.0f);
     addB (ParamIDs::limitOn,    "Lim On",    true);
     addB (ParamIDs::limitSolo,  "Lim Solo",  false);
     addB (ParamIDs::limitDelta, "Lim Delta", false);
 
     // Master
     addF (ParamIDs::masterMTrim,    "M Trim (dB)",   { -24.0f, 0.0f, 0.01f }, -15.0f);
-    addF (ParamIDs::masterHarmonics,"Harmonics",     { 0.0f, 100.0f, 0.1f }, 24.0f);
-    addF (ParamIDs::masterShape,    "Shape",         { 0.0f, 100.0f, 0.1f }, 18.0f);
-    addF (ParamIDs::masterDepth,    "Depth",         { 0.0f, 100.0f, 0.1f }, 24.0f);
+    addF (ParamIDs::masterHarmonics,"Harmonics",     { 0.0f, 100.0f, 0.1f }, 0.0f);
+    addF (ParamIDs::masterShape,    "Shape",         { 0.0f, 100.0f, 0.1f }, 0.0f);
+    addF (ParamIDs::masterDepth,    "Depth",         { 0.0f, 100.0f, 0.1f }, 0.0f);
     addF (ParamIDs::masterMix,      "Master Mix",    { 0.0f, 1.0f, 0.001f }, 1.0f);
-    addF (ParamIDs::masterOutTrim,  "Out Trim (dB)", { -24.0f, 24.0f, 0.01f }, -19.0f);
+    addF (ParamIDs::masterOutTrim,  "Out Trim (dB)", { -24.0f, 24.0f, 0.01f }, 0.0f);
     addB (ParamIDs::masterOn,    "Master On",    true);
     addB (ParamIDs::masterSolo,  "Master Solo",  false);
     addB (ParamIDs::masterDelta, "Master Delta", false);
 
     // Clipper
-    addF (ParamIDs::clipDrive,    "Clip Drive",      { 0.0f, 100.0f, 0.1f }, 18.0f);
-    addF (ParamIDs::clipSoftness, "Clip Softness",   { 0.0f, 100.0f, 0.1f }, 50.0f);
-    addF (ParamIDs::clipLink,     "Clip Link",       { 0.0f, 100.0f, 0.1f }, 18.0f);
+    addF (ParamIDs::clipDrive,    "Clip Drive",      { 0.0f, 100.0f, 0.1f }, 0.0f);
+    addF (ParamIDs::clipSoftness, "Clip Softness",   { 0.0f, 100.0f, 0.1f }, 100.0f);
+    addF (ParamIDs::clipLink,     "Clip Link",       { 0.0f, 100.0f, 0.1f }, 100.0f);
     addB (ParamIDs::clipOn,    "Clip On",    true);
     addB (ParamIDs::clipSolo,  "Clip Solo",  false);
     addB (ParamIDs::clipDelta, "Clip Delta", false);

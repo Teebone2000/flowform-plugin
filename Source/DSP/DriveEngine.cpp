@@ -33,6 +33,10 @@ void DriveEngine::process(juce::AudioBuffer<float>& buffer, int algorithm, float
     currentAlgorithm = algorithm;
     currentDrive = drive;
     
+    // Pass through clean if no drive
+    if (std::abs (drive) < 0.001f)
+        return;
+    
     const auto numChannels = buffer.getNumChannels();
     const auto numSamples = buffer.getNumSamples();
     

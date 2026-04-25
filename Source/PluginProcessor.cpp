@@ -160,281 +160,155 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 {
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
-    auto* inL  = buffer.getReadPointer  (0);
-    auto* inR  = buffer.getReadPointer  (1);
-    auto* outL = buffer.getWritePointer (0);
-    auto* outR = buffer.getWritePointer (1);
 
-    // Read all params
     auto getF = [&] (const char* id) { return apvts.getRawParameterValue (id)->load(); };
     auto getB = [&] (const char* id) { return apvts.getRawParameterValue (id)->load() > 0.5f; };
 
-    const float inTrimDb  = getF (ParamIDs::inTrimDb);
-    const float inHPFHz   = getF (ParamIDs::inHPFHz);
-    const float inLPFHz   = getF (ParamIDs::inLPFHz);
-    const float inVoice   = getF (ParamIDs::inVoice);
-    const float inBias    = getF (ParamIDs::inBias);
-    const bool  inMono    = getB (ParamIDs::inMono);
-    const bool  inPolarity = getB (ParamIDs::inPolarity);
-    const bool  inDelta   = getB (ParamIDs::inDelta);
-    const bool  inComp    = getB (ParamIDs::inComp);
-
-    const float compSC     = getF (ParamIDs::compSC);
-    const float compThresh = getF (ParamIDs::compThresh);
-    const float compRatio  = getF (ParamIDs::compRatio);
-    const float compAttack = getF (ParamIDs::compAttack);
-    const float compRelease= getF (ParamIDs::compRelease);
-    const float compMakeup = getF (ParamIDs::compMakeup);
-    const float compStereo = getF (ParamIDs::compStereo);
-    const int   compMS     = (int) getF (ParamIDs::compMS);
-    const int   compType   = (int) getF (ParamIDs::compType);
-    const bool  compOn     = getB (ParamIDs::compOn);
-    const bool  compSolo   = getB (ParamIDs::compSolo);
-    const bool  compDelta  = getB (ParamIDs::compDelta);
-
-    const float x1 = getF (ParamIDs::x1Hz);
-    const float x2 = getF (ParamIDs::x2Hz);
-    const float x3 = getF (ParamIDs::x3Hz);
-    const float satMixVal = getF (ParamIDs::satMix);
-    const bool  satOn     = getB (ParamIDs::satOn);
-    const bool  satSolo   = getB (ParamIDs::satSolo);
-    const bool  satDelta  = getB (ParamIDs::satDelta);
-
-    const float limitThresh  = getF (ParamIDs::limitThresh);
-    const float limitGain    = getF (ParamIDs::limitGain);
-    const float limitAttack  = getF (ParamIDs::limitAttack);
-    const float limitCeiling = getF (ParamIDs::limitCeiling);
-    const float limitRelease = getF (ParamIDs::limitRelease);
-    const bool  limitOn     = getB (ParamIDs::limitOn);
-    const bool  limitSolo   = getB (ParamIDs::limitSolo);
-    const bool  limitDelta  = getB (ParamIDs::limitDelta);
-
-    const float masterMTrim    = getF (ParamIDs::masterMTrim);
-    const float masterHarmonics= getF (ParamIDs::masterHarmonics);
-    const float masterShape    = getF (ParamIDs::masterShape);
-    const float masterDepth    = getF (ParamIDs::masterDepth);
-    const float masterMixVal   = getF (ParamIDs::masterMix);
-    const float masterOutTrim  = getF (ParamIDs::masterOutTrim);
-    const bool  masterOn      = getB (ParamIDs::masterOn);
-    const bool  masterSolo    = getB (ParamIDs::masterSolo);
-    const bool  masterDelta   = getB (ParamIDs::masterDelta);
-
-    const float clipDrive    = getF (ParamIDs::clipDrive);
-    const float clipSoftness = getF (ParamIDs::clipSoftness);
-    const float clipLink     = getF (ParamIDs::clipLink);
-    const bool  clipOn       = getB (ParamIDs::clipOn);
-    const bool  clipSolo     = getB (ParamIDs::clipSolo);
-    const bool  clipDelta    = getB (ParamIDs::clipDelta);
+    const bool inMono     = getB (ParamIDs::inMono);
+    const bool inPolarity = getB (ParamIDs::inPolarity);
+    const bool inDelta    = getB (ParamIDs::inDelta);
+    const bool compOn     = getB (ParamIDs::compOn);
+    const bool compSolo   = getB (ParamIDs::compSolo);
+    const bool compDelta  = getB (ParamIDs::compDelta);
+    const bool satOn      = getB (ParamIDs::satOn);
+    const bool satSolo    = getB (ParamIDs::satSolo);
+    const bool satDelta   = getB (ParamIDs::satDelta);
+    const bool limitOn    = getB (ParamIDs::limitOn);
+    const bool limitSolo  = getB (ParamIDs::limitSolo);
+    const bool limitDelta = getB (ParamIDs::limitDelta);
+    const bool masterOn   = getB (ParamIDs::masterOn);
+    const bool masterSolo = getB (ParamIDs::masterSolo);
+    const bool masterDelta= getB (ParamIDs::masterDelta);
+    const bool clipOn     = getB (ParamIDs::clipOn);
+    const bool clipSolo   = getB (ParamIDs::clipSolo);
+    const bool clipDelta  = getB (ParamIDs::clipDelta);
 
     hardBypass = getB (ParamIDs::bypass);
-    const bool gDelta = getB (ParamIDs::deltaGlob);
-    const bool gComp  = getB (ParamIDs::compGlob);
-    oversampleFactor = 1; // TODO: implement properly
 
-    // Determine audition
-    auto checkAudition = [&] (bool solo, bool delta) -> int
-    {
-        if (delta) return 2;
-        if (solo)  return 1;
-        return 0;
-    };
-
-    int modes[NUM_SECTIONS] =
-    {
+    int modes[6] = {
         inDelta ? 2 : 0,
-        checkAudition (compSolo, compDelta),
-        checkAudition (satSolo, satDelta),
-        checkAudition (limitSolo, limitDelta),
-        checkAudition (masterSolo, masterDelta),
-        checkAudition  (clipSolo, clipDelta),
+        compDelta ? 2 : (compSolo ? 1 : 0),
+        satDelta ? 2 : (satSolo ? 1 : 0),
+        limitDelta ? 2 : (limitSolo ? 1 : 0),
+        masterDelta ? 2 : (masterSolo ? 1 : 0),
+        clipDelta ? 2 : (clipSolo ? 1 : 0)
     };
-
-    auditionMode = 0;
-    auditionSection = -1;
-    for (int i = 0; i < NUM_SECTIONS; ++i)
+    auditionMode = 0; auditionSection = -1;
+    for (int i = 0; i < 6; ++i)
         if (modes[i] > 0) { auditionMode = modes[i]; auditionSection = i; break; }
 
-    // Audio processing
-    float inGain = flowform::dbToLin (inTrimDb);
+    // Working buffer chain
+    auto* outL = buffer.getWritePointer (0);
+    auto* outR = buffer.getWritePointer (1);
+    auto* inL  = buffer.getReadPointer (0);
 
-    // Oversampled buffers
-    int osN = n;
-    // For now we process at native rate
-    // const float* procL = inL; const float* procR = inR;
-    // TODO: oversampling
+    juce::AudioBuffer<float> dryBuf;
+    dryBuf.makeCopyOf (buffer);
 
-    float outBufL = 0.0f, outBufR = 0.0f;
-    float dryBufL = 0.0f, dryBufR = 0.0f;
-
+    // Input trim
+    float inGain = flowform::dbToLin (getF (ParamIDs::inTrimDb));
     for (int i = 0; i < n; ++i)
     {
-        float L = inL[i] * inGain;
-        float R = inR[i] * inGain;
-
-        // Input processing
-        if (inMono) R = L;
+        float L = buffer.getSample (0, i) * inGain;
+        float R = buffer.getSample (1, i) * inGain;
+        if (inMono)      R = L;
         if (inPolarity) { L = -L; R = -R; }
+        buffer.setSample (0, i, L);
+        buffer.setSample (1, i, R);
+    }
+    for (int i = 0; i < n; ++i) inEnv.process (buffer.getSample (0,i), buffer.getSample (1,i));
+    inLevelL = buffer.getSample (0, n-1);
+    inLevelR = buffer.getSample (1, n-1);
 
-        // Meter input
-        inLevelL = L;
-        inLevelR = R;
-        inEnv.process (L, R);
-        inPeak.process (L, R);
-
-        // Dry capture (before any processing, for delta)
-        dryBufL = L;
-        dryBufR = R;
-
-        // ===== COMPRESSOR =====
-        float compOutL = L, compOutR = R;
-        if (compOn)
-        {
-            // TODO: proper compressor process
-            // For now, simple level detection + reduction
-            float env = std::sqrt ((L * L + R * R) * 0.5f);
-            float envDb = flowform::linToDb (env + 1e-8f);
-            float gr = 0.0f;
-            if (envDb > compThresh)
-                gr = (envDb - compThresh) / compRatio;
-            float gainRed = flowform::dbToLin (-gr);
-            compOutL = L * gainRed;
-            compOutR = R * gainRed;
-            float makeG = flowform::dbToLin (compMakeup);
-            compOutL *= makeG;
-            compOutR *= makeG;
-            compGR = gr;
-        }
-        L = compOutL; R = compOutR;
-        compEnv.process (L, R);
-
-        // ===== SATURATION (4-band) =====
-        // Simplified: just apply drive engine to full range for now
-        // Full crossover implementation later
-        if (satOn)
-        {
-            float satL = L, satR = R;
-            for (int b = 0; b < numSatBands; ++b)
-            {
-                float drive = getF (bnd (b, ParamIDs::driveDb).toRawUTF8());
-                float mix   = getF (bnd (b, ParamIDs::mix).toRawUTF8());
-                float msFoc = getF (bnd (b, ParamIDs::msFocus).toRawUTF8());
-                int   algo  = (int) getF (bnd (b, ParamIDs::algo).toRawUTF8());
-                bool  bandOn = getB (bnd (b, ParamIDs::on).toRawUTF8());
-                if (!bandOn) continue;
-
-                // Drive range 0-100 in blueprint maps to dB range
-                float driveDb = drive * 0.36f; // 0-100 → 0-36dB
-                satBands[b].driveLin = flowform::dbToLin (driveDb);
-                satBands[b].mixVal = mix;
-                satBands[b].algo = algo;
-
-                // Apply sat per sample (simplified — full crossover later)
-                float dLin = satBands[b].driveLin;
-                float xL = satL * dLin;
-                float xR = satR * dLin;
-
-                // Apply via DriveEngine
-                // For now: simple tanh per band
-                float yL = flowform::fastTanh (xL);
-                float yR = flowform::fastTanh (xR);
-
-                satL = satL + (yL - satL) * mix;
-                satR = satR + (yR - satR) * mix;
-            }
-            L = satL; R = satR;
-        }
-
-        // ===== LIMITER =====
-        if (limitOn)
-        {
-            float env = std::max (std::abs (L), std::abs (R));
-            float envDb = flowform::linToDb (env + 1e-8f);
-            float gr = 0.0f;
-            if (envDb > limitThresh)
-                gr = envDb - limitThresh;
-            float gainRed = flowform::dbToLin (-gr);
-            float ceilingGain = flowform::dbToLin (limitCeiling);
-            float preGain = flowform::dbToLin (limitGain);
-            L *= preGain * gainRed * ceilingGain;
-            R *= preGain * gainRed * ceilingGain;
-        }
-
-        // ===== MASTER (Harmonics) =====
-        if (masterOn)
-        {
-            // Simple harmonic saturation
-            float hAmount = masterHarmonics * 0.01f;
-            float shp = masterShape * 0.01f;
-            float dpt = masterDepth * 0.01f;
-            float mTrim = flowform::dbToLin (masterMTrim);
-            float oTrim = flowform::dbToLin (masterOutTrim);
-            float mixM = masterMixVal;
-
-            float xL = L * mTrim;
-            float xR = R * mTrim;
-
-            float hL = xL + hAmount * (xL * xL * 0.5f + xL * xL * xL * shp) * dpt;
-            float hR = xR + hAmount * (xR * xR * 0.5f + xR * xR * xR * shp) * dpt;
-
-            L = (L * (1.0f - mixM) + hL * mixM) * oTrim;
-            R = (R * (1.0f - mixM) + hR * mixM) * oTrim;
-        }
-
-        // ===== CLIPPER =====
-        if (clipOn)
-        {
-            float dDrive = clipDrive * 0.01f * 3.0f; // 0-100 → 0-3x gain
-            float soft = 1.0f - clipSoftness * 0.009f; // 0-100 → 1.0 down to 0.1
-            soft = std::max (0.1f, soft);
-
-            L *= dDrive;
-            R *= dDrive;
-
-            L = flowform::fastTanh (L / soft) * soft;
-            R = flowform::fastTanh (R / soft) * soft;
-        }
-
-        // ===== DELTA / SOLO / MIX =====
-        if (auditionMode == 2) // delta
-        {
-            // Output is dry minus wet
-            outBufL = dryBufL - L;
-            outBufR = dryBufR - R;
-        }
-        else if (auditionMode == 1) // solo
-        {
-            outBufL = L;
-            outBufR = R;
-        }
-        else
-        {
-            outBufL = L;
-            outBufR = R;
-        }
-
-        // Hard bypass
-        if (hardBypass)
-        {
-            outBufL = inL[i];
-            outBufR = inR[i];
-        }
-
-        outL[i] = outBufL;
-        outR[i] = outBufR;
-
-        // Output metering
-        outLevelL = outBufL;
-        outLevelR = outBufR;
-        outPeak.process (outBufL, outBufR);
+    // Compressor
+    if (compOn)
+    {
+        compressor.setThreshold  (getF (ParamIDs::compThresh));
+        compressor.setRatio      (getF (ParamIDs::compRatio));
+        compressor.setAttack     (getF (ParamIDs::compAttack));
+        compressor.setRelease    (getF (ParamIDs::compRelease));
+        compressor.setMakeup     (getF (ParamIDs::compMakeup));
+        compressor.setSidechainHPF (getF (ParamIDs::compSC));
+        compressor.setStereoLink (getF (ParamIDs::compStereo));
+        compressor.setCompType   ((CompressorProcessor::CompType)(int)getF(ParamIDs::compType));
+        compressor.setMSMode     ((CompressorProcessor::MSMode)(int)getF(ParamIDs::compMS));
+        compressor.setEnabled (true);
+        compressor.process (buffer);
+        compGR = compressor.getGainReduction();
     }
 
-    // LUFS
+    // Saturation (4-band via DriveEngine)
+    if (satOn)
+    {
+        for (int b = 0; b < 4; ++b)
+        {
+            if (!getB (bnd (b, ParamIDs::on).toRawUTF8())) continue;
+            float driveDb = getF (bnd (b, ParamIDs::driveDb).toRawUTF8()) * 0.36f;
+            float mix     = getF (bnd (b, ParamIDs::mix).toRawUTF8());
+            int   algo    = (int) getF (bnd (b, ParamIDs::algo).toRawUTF8());
+            driveEngine.setDrive (flowform::dbToLin (driveDb));
+            driveEngine.setAlgorithm (algo);
+            driveEngine.process (buffer, algo, flowform::dbToLin (driveDb));
+        }
+    }
+
+    // Limiter
+    if (limitOn)
+    {
+        limiter.setThreshold (getF (ParamIDs::limitThresh));
+        limiter.setGain      (getF (ParamIDs::limitGain));
+        limiter.setAttack    (getF (ParamIDs::limitAttack));
+        limiter.setRelease   (getF (ParamIDs::limitRelease));
+        limiter.setCeiling   (getF (ParamIDs::limitCeiling));
+        limiter.setEnabled (true);
+        limiter.process (buffer);
+    }
+
+    // Master harmonics
+    if (masterOn)
+    {
+        harmonics.setMTrim      (getF (ParamIDs::masterMTrim));
+        harmonics.setHarmonics  (getF (ParamIDs::masterHarmonics));
+        harmonics.setShape      (getF (ParamIDs::masterShape));
+        harmonics.setDepth      (getF (ParamIDs::masterDepth));
+        harmonics.setGlobalMix  (getF (ParamIDs::masterMix));
+        harmonics.setOutputTrim (getF (ParamIDs::masterOutTrim));
+        harmonics.process (buffer);
+    }
+
+    // Clipper
+    if (clipOn)
+    {
+        clipper.setDrive    (getF (ParamIDs::clipDrive));
+        clipper.setSoftness (getF (ParamIDs::clipSoftness));
+        clipper.setLink     (getF (ParamIDs::clipLink));
+        clipper.setEnabled (true);
+        clipper.process (buffer);
+    }
+
+    // Delta/solo/hard bypass
+    if (hardBypass)
+    {
+        for (int i = 0; i < n; ++i) { outL[i] = inL[i]; outR[i] = inL[i]; }
+        return;
+    }
+    if (auditionMode == 2)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            outL[i] = dryBuf.getSample (0,i) - buffer.getSample (0,i);
+            outR[i] = dryBuf.getSample (1,i) - buffer.getSample (1,i);
+        }
+    }
+    // else (solo or normal): buffer already contains processed audio
+
+    // Output metering
+    for (int i = 0; i < n; ++i) outPeak.process (outL[i], outR[i]);
+    outLevelL = outL[n-1]; outLevelR = outR[n-1];
     lufsMeter.process (outL, outR, n);
     lufsIntegrated = lufsMeter.getIntegrated();
     lufsShortTerm  = lufsMeter.getShortTerm();
     lufsMaxMomentary = lufsMeter.getMaxMomentary();
-
-    // Scope
     scopeFifo.push (inL, outL, nullptr, nullptr, n);
 }
 

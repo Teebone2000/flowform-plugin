@@ -146,7 +146,7 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
           }, juce::WebBrowserComponent::getResourceProviderRoot())
           .withNativeIntegrationEnabled())
 {
-    setSize (1200, 680);
+    setSize (1200, 800);
     addAndMakeVisible (webView);
 
     auto& params = audioProcessor.getAPVTS();

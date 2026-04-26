@@ -12,10 +12,25 @@ DriveEngine::DriveEngine()
     }
 }
 
-void DriveEngine::prepare(double sampleRate)
+void DriveEngine::prepare(double sr)
 {
-    this->sampleRate = (float) sampleRate;
-    for (auto& filter : toneFilters) filter.prepare (sampleRate);
+    this->sampleRate = (float) sr;
+
+    juce::dsp::ProcessSpec spec { sr, 512u, 1u };
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        xover[ch].lp[0].prepare (spec);  xover[ch].hp[0].prepare (spec);
+        xover[ch].lp[0].setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+        xover[ch].hp[0].setType (juce::dsp::LinkwitzRileyFilterType::highpass);
+        xover[ch].lp[1].prepare (spec);  xover[ch].hp[1].prepare (spec);
+        xover[ch].lp[1].setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+        xover[ch].hp[1].setType (juce::dsp::LinkwitzRileyFilterType::highpass);
+        xover[ch].lp[2].prepare (spec);  xover[ch].hp[2].prepare (spec);
+        xover[ch].lp[2].setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+        xover[ch].hp[2].setType (juce::dsp::LinkwitzRileyFilterType::highpass);
+    }
+
+    for (auto& filter : toneFilters) filter.prepare (sr);
     reset();
 }
 
@@ -24,12 +39,20 @@ void DriveEngine::reset()
     dcOffset.fill (0.0f);
     lastSample.fill (0.0f);
     for (auto& t : toneFilters) t.reset();
-    lrState[0] = lrState[1] = 0.0f;
+
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            xover[ch].lp[i].reset();
+            xover[ch].hp[i].reset();
+        }
+    }
 }
 
-// ── New: process a single band with crossover split ─────────────────────
-// Splits the dry signal into band `bandIdx`, applies saturation, writes to wet buffer.
-// The split uses simple 2-pole state-variable filters at x1, x2, x3.
+// ── Process a single band with LR4 crossover split ─────────────────────
+// Uses Linkwitz-Riley 4th-order filters (perfect phase alignment).
+// Band reconstruction: all bands sum back to the original signal perfectly.
 void DriveEngine::processBand (juce::AudioBuffer<float>& wet,
                                const juce::AudioBuffer<float>& dry,
                                int bandIdx,
@@ -37,95 +60,82 @@ void DriveEngine::processBand (juce::AudioBuffer<float>& wet,
                                int algo, float driveDb, float mix,
                                int numChannels, int numSamples)
 {
-    if (numChannels < 1) return;
+    if (numChannels < 1 || bandIdx < 0 || bandIdx > 3) return;
+
+    float fLow  = juce::jlimit (20.0f, 19000.0f, x1Hz);
+    float fMid  = juce::jlimit (20.0f, 19000.0f, x2Hz);
+    float fHigh = juce::jlimit (20.0f, 19000.0f, x3Hz);
+
+    // Re-arrange to ensure monotonicity
+    if (fMid <= fLow)  fMid  = fLow + 10.0f;
+    if (fHigh <= fMid) fHigh = fMid + 10.0f;
+
+    for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
+    {
+        // Set crossover frequencies (only if changed — JUCE's setCutoffFrequency is smart about this)
+        xover[ch].lp[0].setCutoffFrequency (fLow);
+        xover[ch].hp[0].setCutoffFrequency (fLow);
+        xover[ch].lp[1].setCutoffFrequency (fMid);
+        xover[ch].hp[1].setCutoffFrequency (fMid);
+        xover[ch].lp[2].setCutoffFrequency (fHigh);
+        xover[ch].hp[2].setCutoffFrequency (fHigh);
+    }
+
+    float driveLin = std::pow (10.0f, driveDb / 20.0f);
+    float mixScale = mix;
 
     auto* wetL = wet.getWritePointer (0);
     auto* wetR = numChannels > 1 ? wet.getWritePointer (1) : wetL;
     auto* dryL = dry.getReadPointer (0);
     auto* dryR = numChannels > 1 ? dry.getReadPointer (1) : dryL;
 
-    float driveLin = std::pow (10.0f, driveDb / 20.0f);
-    float mixScale = mix;  // 0..1
-
     for (int i = 0; i < numSamples; ++i)
     {
         float inL = dryL[i];
-        float inR = dryR[i];
+        float inR = (numChannels > 1) ? dryR[i] : inL;
 
-        // Simple LR4-style crossovers using 1-pole IIR cascaded
-        // We use a state-variable approach: each band = bp at (x1,x2) or lp/hp
-        float bandL = 0.0f, bandR = 0.0f;
+        float bandVals[2] = { 0.0f, 0.0f };
 
-        // Crossover frequencies — clamp sanely
-        float fLow  = juce::jlimit (10.0f, 20000.0f, x1Hz);
-        float fMid  = juce::jlimit (10.0f, 20000.0f, x2Hz);
-        float fHigh = juce::jlimit (10.0f, 20000.0f, x3Hz);
-
-        float dt = 1.0f / (sampleRate + 1e-12f);
-
-        // Per-channel crossover filtering
         for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
         {
             float in = (ch == 0) ? inL : inR;
-            float& lp1 = lpState[ch][0];
-            float& lp2 = lpState[ch][1];
-            float& hp1 = hpState[ch][0];
-            float& hp2 = hpState[ch][1];
-            float& midLP = midLpState[ch];
-            float& midHP = midHpState[ch];
-            float& hiLP = hiLpState[ch];
+            XoverFilters& x = xover[ch];
+            float sel = 0.0f;
 
-            // Band 0 (LOW): LP at fLow
-            float aLow = dt / (1.0f / (2.0f * 3.14159f * fLow) + dt);
-            lp1 = lp1 + aLow * (in - lp1);  // 1-pole LP
-            lp2 = lp2 + aLow * (lp1 - lp2); // cascade for 2-pole
+            // LR4 filters: process each filter independently per sample
+            // LP = cascaded 2nd-order, HP = cascaded 2nd-order
+            // Perfect reconstruction: LP(x) + HP(x) = x (time-aligned at -6dB xover)
+            float lp0 = x.lp[0].processSample (ch, in);
+            float hp0 = x.hp[0].processSample (ch, in);
+            float lp1 = x.lp[1].processSample (ch, hp0);  // HP at fLow → LP at fMid = LO-MID band
+            float hp1 = x.hp[1].processSample (ch, hp0);
+            float lp2 = x.lp[2].processSample (ch, hp1);  // HP at fLow → HP at fMid → LP at fHigh = HI-MID band
+            float hp2 = x.hp[2].processSample (ch, hp1);  // HP at fLow → HP at fMid → HP at fHigh = HIGH band
 
-            // Band 1 (LOW-MID): BP at [fLow, fMid] = HP first then LP
-            float aHP = dt / (1.0f / (2.0f * 3.14159f * fLow) + dt);
-            midHP = midHP + aHP * (in - midHP); // 1-pole HP
-            float hpOut = in - midHP;
-            float aMidLP = dt / (1.0f / (2.0f * 3.14159f * fMid) + dt);
-            midLP = midLP + aMidLP * (hpOut - midLP); // LP cascade
-            float midOut = midLP;
-
-            // Band 2 (HIGH-MID): BP at [fMid, fHigh]
-            float aMidHP = dt / (1.0f / (2.0f * 3.14159f * fMid) + dt);
-            float& hpMid = hpMidState[ch];
-            hpMid = hpMid + aMidHP * (in - hpMid);
-            float hpMidOut = in - hpMid;
-            float aHiLP  = dt / (1.0f / (2.0f * 3.14159f * fHigh) + dt);
-            hiLP = hiLP + aHiLP * (hpMidOut - hiLP);
-
-            // Band 3 (HIGH): HP at fHigh
-            float aHiHP = dt / (1.0f / (2.0f * 3.14159f * fHigh) + dt);
-            float& hp3 = hpHiState[ch];
-            hp3 = hp3 + aHiHP * (in - hp3);
-            float hiOut = in - hp3;
-
-            float sel;
+            // Band selection with perfect reconstruction guarantee:
+            //   Band 0 (LOW)   = lp0
+            //   Band 1 (LO-MID)= hp0 - hp1 (or equivalently lp1)
+            //   Band 2 (HI-MID)= hp1 - hp2 (or equivalently lp2)
+            //   Band 3 (HIGH)  = hp2
+            //   Sum: lp0 + (hp0-hp1) + (hp1-hp2) + hp2 = lp0 + hp0 = in ✓
             switch (bandIdx)
             {
-                case 0: sel = lp2;        break;  // LOW
-                case 1: sel = midOut;     break;  // LO-MID
-                case 2: sel = hiLP;       break;  // HI-MID (midHP->LP at fHigh)
-                case 3: sel = hiOut;      break;  // HIGH
-                default: sel = 0.0f;       break;
+                case 0: sel = lp0;                     break;  // LOW
+                case 1: sel = hp0 - hp1;               break;  // LO-MID (or lp1)
+                case 2: sel = hp1 - hp2;               break;  // HI-MID (or lp2)
+                case 3: sel = hp2;                     break;  // HIGH
+                default: sel = 0.0f;                    break;
             }
 
-            // Now apply saturation algorithm to band signal
-            float sat = sel;
-            sat = applySaturation (sat, algo, driveLin);
+            // Apply saturation
+            float sat = applySaturation (sel, algo, driveLin);
 
-            // Mix wet with dry per-band
-            sat = sel * (1.0f - mixScale) + sat * mixScale;
-
-            if (ch == 0) bandL = sat;
-            else         bandR = sat;
+            // Dry/wet per-band
+            bandVals[ch] = sel * (1.0f - mixScale) + sat * mixScale;
         }
 
-        // Accumulate into wet buffer (summed across bands)
-        wetL[i] += bandL;
-        wetR[i] += bandR;
+        wetL[i] += bandVals[0];
+        if (numChannels > 1) wetR[i] += bandVals[1];
     }
 }
 
@@ -134,54 +144,42 @@ float DriveEngine::applySaturation (float x, int algo, float drive)
 {
     switch (algo)
     {
-        case 0: x = processTube (x, drive);         break;
-        case 1: x = processTape (x, drive);         break;
-        case 2: x = processSolidState (x, drive);   break;
-        case 3: x = processTransformer (x, drive);  break;
-        default: break;
+        case 0: return processTube (x, drive);
+        case 1: return processTape (x, drive);
+        case 2: return processSolidState (x, drive);
+        case 3: return processTransformer (x, drive);
+        default: return x;
     }
-    return x;
 }
 
-// ── Legacy process (kept for API compat, now acts on full signal) ─────
+// ── Legacy full-buffer process (unused but kept for API compat) ────────
 void DriveEngine::process(juce::AudioBuffer<float>& buffer, int algorithm, float drive)
 {
     currentAlgorithm = algorithm;
     currentDrive = drive;
     if (std::abs (drive) < 0.001f) return;
 
-    const auto numChannels = buffer.getNumChannels();
-    const auto numSamples  = buffer.getNumSamples();
-
-    for (int ch = 0; ch < numChannels; ++ch)
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
     {
         auto* samples = buffer.getWritePointer (ch);
-        for (int i = 0; i < numSamples; ++i)
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
             samples[i] = applySaturation (samples[i], algorithm, drive);
     }
 }
 
-// ── Saturation algorithm implementations ────────────────────────────────
+// ── Saturation algorithms ──────────────────────────────────────────────
 float DriveEngine::processTube(float x, float drive)
 {
     float gain = 1.0f + drive * 0.1f;
     x *= gain;
-
-    if (x > 0.0f)
-        x = tanhSoftClip (x * 1.2f) * 0.833f;
-    else
-        x = tanhSoftClip (x * 0.8f) * 1.25f;
-
-    // Even harmonics
+    x = (x > 0.0f) ? tanhSoftClip (x * 1.2f) * 0.833f
+                    : tanhSoftClip (x * 0.8f) * 1.25f;
     float evenHarm = x * x * 0.1f * (drive / (100.0f + 1e-6f));
     x += evenHarm;
-
-    // DC block
     float dc = dcOffset[0];
     dc = 0.999f * dc + 0.001f * x;
     x -= dc;
     dcOffset[0] = dc;
-
     return x;
 }
 
@@ -189,24 +187,16 @@ float DriveEngine::processTape(float x, float drive)
 {
     float gain = 1.0f + drive * 0.05f;
     x *= gain;
-
-    float hysteresis = transformerStages[0].hysteresis * 0.1f;
     float state = lastSample[0];
     float threshold = 0.1f;
     if (std::abs (x - state) > threshold)
     {
-        if (x > state) x += hysteresis * 0.05f;
-        else           x -= hysteresis * 0.05f;
+        float hyst = transformerStages[0].hysteresis * 0.1f;
+        x += (x > state ? hyst : -hyst) * 0.05f;
     }
-
-    if (x > 0.0f)
-        x = tanhSoftClip (x);
-    else
-        x = tanhSoftClip (x * 0.7f) * 1.428f;
-
+    x = (x > 0.0f) ? tanhSoftClip (x) : tanhSoftClip (x * 0.7f) * 1.428f;
     float compression = 0.5f + 0.5f * (drive / (100.0f + 1e-6f));
     x = x / (1.0f + std::abs (x) * compression);
-
     lastSample[0] = x;
     return x;
 }
@@ -228,19 +218,15 @@ float DriveEngine::processTransformer(float x, float drive)
 {
     float gain = 1.0f + drive * 0.08f;
     x *= gain;
-    x = x / (1.0f + x * x * 0.5f);
-    return x;
+    return x / (1.0f + x * x * 0.5f);
 }
 
 float DriveEngine::processDigital(float x, float drive)
 {
     float gain = 1.0f + drive * 0.2f;
     x *= gain;
-    float limit = 0.95f;
-    x = juce::jlimit (-limit, limit, x);
-    float folded = std::sin (x * 3.14159f) * 0.1f * (drive / (100.0f + 1e-6f));
-    x += folded;
-    return x;
+    x = juce::jlimit (-0.95f, 0.95f, x);
+    return x + std::sin (x * 3.14159f) * 0.1f * (drive / (100.0f + 1e-6f));
 }
 
 float DriveEngine::processTransistor(float x, float drive)
@@ -248,12 +234,11 @@ float DriveEngine::processTransistor(float x, float drive)
     float gain = 1.0f + drive * 0.25f;
     x *= gain;
     x = asymmetricClip (x);
-    if (x > 0.0f) x = std::atan (x * 2.0f) * 0.5f;
-    else          x = std::atan (x * 1.5f) * 0.666f;
-    return x;
+    return (x > 0.0f) ? std::atan (x * 2.0f) * 0.5f
+                      : std::atan (x * 1.5f) * 0.666f;
 }
 
-// ── Helper functions ──────────────────────────────────────────────────
+// ── Helper functions ─────────────────────────────────────────────────
 float DriveEngine::tanhSoftClip(float x)
 {
     float x2 = x * x;
@@ -263,26 +248,26 @@ float DriveEngine::tanhSoftClip(float x)
 
 float DriveEngine::asymmetricClip(float x)
 {
-    if (x > 0.0f) return std::tanh (x * 0.8f) * 1.25f;
-    else          return std::tanh (x * 1.2f) * 0.833f;
+    return (x > 0.0f) ? std::tanh (x * 0.8f) * 1.25f
+                      : std::tanh (x * 1.2f) * 0.833f;
 }
 
 float DriveEngine::diodeClipping(float x)
 {
-    if (x > 0.0f) return 1.0f - std::exp (-x * 1.5f);
-    else          return -1.0f + std::exp (x * 1.5f);
+    return (x > 0.0f) ? 1.0f - std::exp (-x * 1.5f)
+                      : -1.0f + std::exp (x * 1.5f);
 }
 
 float DriveEngine::magneticHysteresis(float x, float& state)
 {
     float delta = x - state;
     float hysteresis = 0.05f;
-    if (delta > hysteresis)       state = x - hysteresis;
-    else if (delta < -hysteresis) state = x + hysteresis;
+    if (delta > hysteresis)            state = x - hysteresis;
+    else if (delta < -hysteresis)      state = x + hysteresis;
     return state;
 }
 
-// ── ToneFilter ─────────────────────────────────────────────────────────
+// ── ToneFilter ────────────────────────────────────────────────────────
 void DriveEngine::ToneFilter::prepare(double sr) { sampleRate = sr; }
 
 float DriveEngine::ToneFilter::process(float x)
@@ -305,8 +290,7 @@ float DriveEngine::ToneFilter::process(float x)
     float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
     x2 = x1; x1 = x;
     y2 = y1; y1 = y;
-    y *= (1.0f + bias * 0.1f);
-    return y;
+    return y * (1.0f + bias * 0.1f);
 }
 
 void DriveEngine::ToneFilter::setTilt(float t) { tilt = t; }

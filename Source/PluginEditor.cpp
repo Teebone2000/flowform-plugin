@@ -79,11 +79,24 @@ void FlowFormAudioProcessorEditor::SatBand::resized()
     auto r = getLocalBounds().reduced (3);
     title.setBounds (r.removeFromTop (12));
     auto br = r.removeFromTop (14);
-    onBtn.setBounds (br.removeFromLeft (24)); soloBtn.setBounds (br.removeFromLeft (26)); deltaBtn.setBounds (br);
-    algoLbl.setBounds (r.removeFromTop (9)); algo.setBounds (r.removeFromTop (16));
-    driveLbl.setBounds (r.removeFromTop (9)); drive.setBounds (r.removeFromTop (42));
-    mixLbl.setBounds (r.removeFromTop (9)); mix.setBounds (r.removeFromTop (38));
-    msLbl.setBounds (r.removeFromTop (9)); msFocus.setBounds (r.removeFromTop (18));
+    onBtn.setBounds   (br.removeFromLeft (24));
+    soloBtn.setBounds (br.removeFromLeft (26));
+    deltaBtn.setBounds (br);
+    // Algo label + combo (separate rows to prevent overlap)
+    algoLbl.setBounds (r.removeFromTop (10));
+    algo.setBounds    (r.removeFromTop (18));
+    r.removeFromTop (2);
+    // Drive
+    driveLbl.setBounds (r.removeFromTop (10));
+    drive.setBounds    (r.removeFromTop (44));
+    r.removeFromTop (1);
+    // Mix
+    mixLbl.setBounds (r.removeFromTop (10));
+    mix.setBounds    (r.removeFromTop (40));
+    r.removeFromTop (1);
+    // M/S
+    msLbl.setBounds (r.removeFromTop (10));
+    msFocus.setBounds (r.removeFromTop (20));
 }
 
 // ===== Constructor =====

@@ -61,15 +61,12 @@ public:
     void configureTransformerStages(const std::array<TransformerStage, 6>& stages);
     
 private:
-    // Cross-over state (single-pole LP/HP per channel for band splitting)
-    float lpState[2][2]  = {{0}};  // [ch][cascade stage]
-    float hpState[2][2]  = {{0}};
-    float midLpState[2]  = {0};
-    float midHpState[2]  = {0};
-    float hiLpState[2]   = {0};
-    float hpMidState[2]  = {0};
-    float hpHiState[2]   = {0};
-    float lrState[2]     = {0};
+    // LR4 crossover filters (3 LP + 3 HP per channel, one per xover point)
+    struct XoverFilters {
+        juce::dsp::LinkwitzRileyFilter<float> lp[3];  // LP at fLow, fMid, fHigh
+        juce::dsp::LinkwitzRileyFilter<float> hp[3];  // HP at fLow, fMid, fHigh
+    };
+    XoverFilters xover[2];
 
     //==============================================================================
     float sampleRate = 44100.0f;

@@ -192,17 +192,30 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     hardBypass = getB (ParamIDs::bypass);
     compActive = getB (ParamIDs::compGlob);
 
-    int modes[6] = {
-        inDelta ? 2 : 0,
-        compDelta ? 2 : (compSolo ? 1 : 0),
-        satDelta ? 2 : (satSolo ? 1 : 0),
-        limitDelta ? 2 : (limitSolo ? 1 : 0),
-        masterDelta ? 2 : (masterSolo ? 1 : 0),
-        clipDelta ? 2 : (clipSolo ? 1 : 0)
-    };
-    auditionMode = 0; auditionSection = -1;
-    for (int i = 0; i < 6; ++i)
-        if (modes[i] > 0) { auditionMode = modes[i]; auditionSection = i; break; }
+    // Solo/delta detection: 0=none, 1=solo, 2=delta
+    int soloSection = -1;
+    bool anyDelta = false;
+    bool anySolo = false;
+    if (inDelta || compDelta || satDelta || limitDelta || masterDelta || clipDelta)
+        anyDelta = true;
+    else if (compSolo)  { soloSection = 1; anySolo = true; }
+    else if (satSolo)   { soloSection = 2; anySolo = true; }
+    else if (limitSolo) { soloSection = 3; anySolo = true; }
+    else if (masterSolo){ soloSection = 4; anySolo = true; }
+    else if (clipSolo)  { soloSection = 5; anySolo = true; }
+
+    // Determine which section index this run corresponds to
+    // 0=Input(no-op), 1=Comp, 2=Sat, 3=Limit, 4=Master, 5=Clipper
+    // We map from the button enums to match auditionSection
+    auditionMode = anyDelta ? 2 : (anySolo ? 1 : 0);
+    auditionSection = soloSection;
+
+    // Snapshot buffer state just before the solo'd section for isolation.
+    // Will be filled right before the solo'd section processes.
+    if (auditionMode == 1 && auditionSection >= 0)
+        soloSnapBuf.setSize (buffer.getNumChannels(), n, false, true, true);
+    else
+        soloSnapBuf.setSize (1, 1); // minimal allocation when not soloing
 
     // Working buffer chain
     auto* outL = buffer.getWritePointer (0);
@@ -227,8 +240,15 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     inLevelL = buffer.getSample (0, n-1);
     inLevelR = buffer.getSample (1, n-1);
 
+    // Solo snapshot helper: capture buffer state right before the solo'd section
+    auto maybeSnapSolo = [&] (int secIdx) {
+        if (auditionMode == 1 && auditionSection == secIdx)
+            soloSnapBuf.makeCopyOf (buffer);
+    };
+
     // Compressor
-    if (compOn)
+    maybeSnapSolo (1);
+    if (compOn && !(auditionMode == 1 && auditionSection != 1))
     {
         compressor.setThreshold  (getF (ParamIDs::compThresh));
         compressor.setRatio      (getF (ParamIDs::compRatio));
@@ -245,7 +265,8 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     // Saturation (4-band with crossover split via DriveEngine)
-    if (satOn)
+    maybeSnapSolo (2);
+    if (satOn && !(auditionMode == 1 && auditionSection != 2))
     {
         const int numChan = buffer.getNumChannels();
         float x1 = getF (ParamIDs::x1Hz);
@@ -291,7 +312,8 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     // Limiter
-    if (limitOn)
+    maybeSnapSolo (3);
+    if (limitOn && !(auditionMode == 1 && auditionSection != 3))
     {
         limiter.setThreshold (getF (ParamIDs::limitThresh));
         limiter.setGain      (getF (ParamIDs::limitGain));
@@ -303,7 +325,8 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     // Master harmonics
-    if (masterOn)
+    maybeSnapSolo (4);
+    if (masterOn && !(auditionMode == 1 && auditionSection != 4))
     {
         harmonics.setMTrim      (getF (ParamIDs::masterMTrim));
         harmonics.setHarmonics  (getF (ParamIDs::masterHarmonics));
@@ -315,7 +338,8 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     }
 
     // Clipper
-    if (clipOn)
+    maybeSnapSolo (5);
+    if (clipOn && !(auditionMode == 1 && auditionSection != 5))
     {
         clipper.setDrive    (getF (ParamIDs::clipDrive));
         clipper.setSoftness (getF (ParamIDs::clipSoftness));
@@ -363,12 +387,24 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
 
 if (hardBypass)
     {
-        auto* dryL = dryBuf.getReadPointer (0);
-        auto* dryR = dryBuf.getReadPointer (1);
-        for (int i = 0; i < n; ++i) { outL[i] = dryL[i]; outR[i] = dryR[i]; }
+        for (int i = 0; i < n; ++i) { outL[i] = dryBuf.getSample (0,i); outR[i] = dryBuf.getSample (1,i); }
         return;
     }
-    if (auditionMode == 2)
+    if (auditionMode == 1)
+    {
+        // Solo: output only the solo'd section's contribution.
+        // soloSnapBuf captured the buffer state right before the solo'd section ran.
+        // The difference (buffer - soloSnapBuf) = just that section's processing.
+        // Add that to the dry signal to get: raw input + (section output - section input).
+        for (int i = 0; i < n; ++i)
+        {
+            float sL = buffer.getSample (0,i) - soloSnapBuf.getSample (0,i);
+            float sR = buffer.getSample (1,i) - soloSnapBuf.getSample (1,i);
+            outL[i] = dryBuf.getSample (0,i) + sL;
+            outR[i] = dryBuf.getSample (1,i) + sR;
+        }
+    }
+    else if (auditionMode == 2)
     {
         for (int i = 0; i < n; ++i)
         {
@@ -376,7 +412,6 @@ if (hardBypass)
             outR[i] = dryBuf.getSample (1,i) - buffer.getSample (1,i);
         }
     }
-    // else (solo or normal): buffer already contains processed audio
 
     // Output metering
     for (int i = 0; i < n; ++i) outPeak.process (outL[i], outR[i]);

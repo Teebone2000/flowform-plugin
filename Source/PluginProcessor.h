@@ -201,5 +201,8 @@ private:
     // Scope
     ScopeFifo scopeFifo;
 
+    // Solo snapshot buffer — captures buffer state before the solo'd section
+    juce::AudioBuffer<float> soloSnapBuf;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FlowFormAudioProcessor)
 };

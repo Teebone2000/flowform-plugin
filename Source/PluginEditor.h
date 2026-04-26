@@ -1,155 +1,32 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
-#include "ScopeComponent.h"
-#include "DigitalCapersLNF.h"
-#include "MeterComponents.h"
 
-//==============================================================================
 class FlowFormAudioProcessorEditor : public juce::AudioProcessorEditor,
-                                     private juce::Timer
+                                      public juce::AudioProcessorValueTreeState::Listener,
+                                      private juce::Timer
 {
 public:
-    FlowFormAudioProcessorEditor (FlowFormAudioProcessor&);
-    ~FlowFormAudioProcessorEditor() ;
+    using APVTS = FlowFormAudioProcessor::APVTS;
 
-    void paint (juce::Graphics&) ;
-    void resized() ;
+    FlowFormAudioProcessorEditor (FlowFormAudioProcessor&);
+    ~FlowFormAudioProcessorEditor() override;
+
+    void paint (juce::Graphics&) override {}
+    void resized() override;
+
+    void parameterChanged (const juce::String& paramID, float newValue) override;
 
 private:
-    using APVTS = FlowFormAudioProcessor::APVTS;
+    void timerCallback() override;
+    void loadUI();
+    std::optional<juce::WebBrowserComponent::Resource> getResource (const juce::String& url);
+    void sendToUI (const juce::String& json);
+
     FlowFormAudioProcessor& audioProcessor;
-    APVTS& apvts;
-    using SAttach = juce::AudioProcessorValueTreeState::SliderAttachment;
-    using BAttach = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    using CAttach = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    juce::WebBrowserComponent webView;
 
-    // ===== Look and Feel =====
-        DigitalCapersLNF lnf;
-
-    // ===== Helpers =====
-    static juce::Colour accent() { return juce::Colour::fromRGB (0, 191, 255); }
-    void styleKnob (juce::Slider&, int sizePx = 56);
-    void styleFader (juce::Slider&);
-    void styleLabel (juce::Label&, float fontSize = 9.0f);
-
-    // ===== Header =====
-    juce::Label logo { {}, "DIGITAL CAPERS" };
-    juce::ComboBox presetBox, oversampleBox, zoomBox;
-    juce::TextButton abButton { "A/B" }, undoBtn { "Undo" }, redoBtn { "Redo" };
-    juce::ToggleButton bypassBtn { "BYPASS" }, deltaBtn { "Δ" }, compBtn { "COMP" };
-
-    // ===== Scope =====
-    ScopeComponent scope;
-    juce::TextButton scopeToggleBtn { "W" };
-
-    // ===== Input Panel =====
-    juce::Label inTitle { {}, "INPUT" };
-    LedDot ovrLed, dynLed;
-    juce::Label ovrLbl { {}, "OVR" }, dynLbl { {}, "DYN" };
-    VerticalMeterBar inMeterL, inMeterR;
-    juce::Slider inTrim, inHPF, inLPF, inVoice, inBias;
-    juce::Label inTrimLbl { {}, "TRIM" }, inHPFLbl { {}, "HIGH PASS" },
-                inLPFLbl { {}, "LOW PASS" }, inVoiceLbl { {}, "VOICE" }, inBiasLbl { {}, "BIAS" };
-    juce::ToggleButton inMonoBtn { "MONO" }, inPolarBtn { "Ø" },
-                       inDeltaBtn { "Δ" }, inCompBtn { "COMP" };
-    std::unique_ptr<SAttach> aInTrim, aInHPF, aInLPF, aInVoice, aInBias;
-    std::unique_ptr<BAttach> aInMono, aInPolar, aInDelta, aInComp;
-
-    // ===== Compressor Panel =====
-    CompCurveComponent compCurve;
-    HorizontalMeterBar compGRMeter;
-    juce::Label compTitle { {}, "COMPRESSOR" };
-    juce::Slider compSC, compThresh, compRatio, compAttack, compRelease, compMakeup, compStereo;
-    juce::Label compSCLbl { {}, "S/C HPF" }, compThreshLbl { {}, "THRESH" },
-                compRatioLbl { {}, "RATIO" }, compAttackLbl { {}, "ATTACK" },
-                compReleaseLbl { {}, "RELEASE" }, compMakeupLbl { {}, "MAKEUP" },
-                compStereoLbl { {}, "STEREO\nLINK" };
-    juce::ComboBox compMS, compType;
-    juce::Label compMSLbl { {}, "M/S" }, compTypeLbl { {}, "TYPE" };
-    juce::ToggleButton compOnBtn { "ON" }, compSoloBtn { "SOLO" }, compDeltaBtn { "Δ" };
-    std::unique_ptr<SAttach> aCompSC, aCompThresh, aCompRatio, aCompAttack, aCompRelease, aCompMakeup, aCompStereo;
-    std::unique_ptr<CAttach> aCompMS, aCompType;
-    std::unique_ptr<BAttach> aCompOn, aCompSolo, aCompDelta;
-
-    // ===== Saturation Panel =====
-    SatWaveformComponent satWave;
-    juce::Label satTitle { {}, "SATURATION" };
-    juce::Slider x1, x2, x3;
-    juce::Label x1Lbl { {}, "LOW\nSPLIT" }, x2Lbl { {}, "MID\nSPLIT" }, x3Lbl { {}, "HIGH\nSPLIT" };
-    juce::Slider satMixFader;
-    juce::ToggleButton satOnBtn { "ON" }, satSoloBtn { "SOLO" }, satDeltaBtn { "Δ" };
-    std::unique_ptr<SAttach> aX1, aX2, aX3, aSatMix;
-    std::unique_ptr<BAttach> aSatOn, aSatSolo, aSatDelta;
-
-    struct SatBand : public juce::Component
-    {
-        SatBand (APVTS&, int bandIndex);
-        void paint (juce::Graphics&) ;
-        void resized() ;
-
-        int band;
-        juce::Label title;
-
-        juce::ToggleButton onBtn { "ON" }, soloBtn { "SOLO" }, deltaBtn { "Δ" };
-        juce::Slider drive, mix, msFocus;
-        juce::ComboBox algo;
-        juce::Label driveLbl { {}, "DRIVE" }, mixLbl { {}, "MIX" },
-                    msLbl { {}, "M/S" }, algoLbl { {}, "ALGO" };
-
-        std::unique_ptr<BAttach> aOn, aSolo, aDelta;
-        std::unique_ptr<SAttach> aDrive, aMix, aMS;
-        std::unique_ptr<CAttach> aAlgo;
-    };
-    std::array<std::unique_ptr<SatBand>, 4> satBands;
-
-    // ===== Limiter Panel =====
-    HorizontalMeterBar limGRMeter, limInputMeter;
-    juce::Label limGRLbl { {}, "LIM GR" }, limInputLbl { {}, "INPUT" };
-    juce::Label limitTitle { {}, "LIMITER" };
-    juce::Slider limitThresh, limitGain, limitAttack, limitCeiling, limitRelease;
-    juce::Label limitThreshLbl { {}, "THRESH" }, limitGainLbl { {}, "GAIN" },
-                limitAttackLbl { {}, "ATTACK" }, limitCeilingLbl { {}, "CEIL" },
-                limitReleaseLbl { {}, "RELEASE" };
-    juce::ToggleButton limitOnBtn { "ON" }, limitSoloBtn { "SOLO" }, limitDeltaBtn { "Δ" };
-    std::unique_ptr<SAttach> aLimitThresh, aLimitGain, aLimitAttack, aLimitCeiling, aLimitRelease;
-    std::unique_ptr<BAttach> aLimitOn, aLimitSolo, aLimitDelta;
-
-    // ===== Master Panel =====
-    VerticalMeterBar masterMeterL, masterMeterR;
-    juce::Label masterDbScale;   // drawn in paint() — just reserve space
-    juce::Label masterTitle { {}, "MASTER" };
-    juce::Slider masterMTrim, masterHarmonics, masterShape, masterDepth, masterMix, masterOutTrim;
-    juce::Label masterMTrimLbl { {}, "M TRIM" }, masterHarmonicsLbl { {}, "HARM" },
-                masterShapeLbl { {}, "SHAPE" }, masterDepthLbl { {}, "DEPTH" },
-                masterMixLbl { {}, "MIX" }, masterOutTrimLbl { {}, "OUT" };
-    juce::ToggleButton masterOnBtn { "ON" }, masterSoloBtn { "SOLO" }, masterDeltaBtn { "Δ" };
-    std::unique_ptr<SAttach> aMasterMTrim, aMasterHarm, aMasterShape, aMasterDepth, aMasterMix, aMasterOutTrim;
-    std::unique_ptr<BAttach> aMasterOn, aMasterSolo, aMasterDelta;
-
-    // ===== Clipper Panel =====
-    LedDot clpLed;
-    juce::Label clpLbl { {}, "CLP" }, stLbl { {}, "ST" };
-    // LUFS readouts
-    juce::Label lufsLongVal  { {}, "--.-" }, lufsShortVal { {}, "--.-" }, lufsInterVal { {}, "--.-" };
-    juce::Label lufsLongLbl  { {}, "LONG" }, lufsShortLbl { {}, "SHORT"}, lufsInterLbl { {}, "INTER"};
-    juce::Label clipperTitle { {}, "CLIPPER" };
-    juce::Slider clipDrive, clipSoftness, clipLink;
-    juce::Label clipDriveLbl { {}, "DRIVE" }, clipSoftnessLbl { {}, "SOFT" },
-                clipLinkLbl { {}, "LINK" };
-    juce::ToggleButton clipOnBtn { "ON" }, clipSoloBtn { "SOLO" }, clipDeltaBtn { "Δ" };
-    std::unique_ptr<SAttach> aClipDrive, aClipSoft, aClipLink;
-    std::unique_ptr<BAttach> aClipOn, aClipSolo, aClipDelta;
-    std::unique_ptr<BAttach> aBypass, aGlobalDelta, aGlobalComp;
-
-    // A/B state
-    int currentAB = 0; // 0 = A, 1 = B
-
-    float zoomFactor = 1.0f;
-    std::array<juce::Rectangle<int>, 6> panelBounds {};
-
-    void applyZoom (float z);
-    void timerCallback() ;
+    bool uiLoaded = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FlowFormAudioProcessorEditor)
 };

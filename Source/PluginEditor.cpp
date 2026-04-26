@@ -279,26 +279,39 @@ FlowFormAudioProcessorEditor::~FlowFormAudioProcessorEditor() { juce::LookAndFee
 
 void FlowFormAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    const int w = getWidth();
+    const int h = getHeight();
     const int topH = juce::roundToInt (48 * zoomFactor);
 
-    // Deep charcoal gradient — top lighter (0x252525), bottom darker (0x0f0f0f)
+    // Outer glow border (Figma: 0 0 0 0.5px rgb(0,191,255), 0 8px 32px rgba(0,0,0,0.8))
     {
-        juce::ColourGradient bg (juce::Colour (0xff252525), 0, 0,
-                                 juce::Colour (0xff0f0f0f), 0, (float) getHeight(), false);
-        g.setGradientFill (bg);
-        g.fillAll();
+        g.setColour (juce::Colour (0xff1a1a1a));
+        g.fillRect (0, 0, w, h);
     }
 
-    // Panel backgrounds
+    // Main inner container (Figma: bg-gradient-to-b from-gray-800 to-gray-900, p-6 = 24px)
+    {
+        auto inner = juce::Rectangle<float> (12.0f, 12.0f, w - 24.0f, h - 24.0f);
+        juce::ColourGradient bg (juce::Colour (0xff252525), 0, 0,
+                                 juce::Colour (0xff111827), 0, (float) h, false);
+        g.setGradientFill (bg);
+        g.fillRoundedRectangle (inner, 12.0f);
+
+        // Electric blue glow border around main container
+        g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT).withAlpha (0.25f));
+        g.drawRoundedRectangle (inner, 12.0f, 1.0f);
+    }
+
+    // Panel backgrounds (drawn after main container, inside the reduced area)
     for (auto& pb : panelBounds)
         if (! pb.isEmpty())
             DigitalCapersLNF::drawPanel (g, pb);
 
     // Top bar (drawn after panels so it always overlaps the top edge)
     g.setColour (juce::Colour (DigitalCapersLNF::COL_TOPBAR_BG));
-    g.fillRect (0, 0, getWidth(), topH);
-    g.setColour (juce::Colour (DigitalCapersLNF::COL_PANEL_BORDER));
-    g.drawLine (0.0f, (float) topH, (float) getWidth(), (float) topH, 1.0f);
+    g.fillRect (0, 0, w, topH);
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT).withAlpha (0.15f));
+    g.drawLine (0.0f, (float) topH, (float) w, (float) topH, 1.0f);
 
     // ── FLOWFORM badge ─────────────────────────────────────────────────────────
     const float bx = 10.0f * zoomFactor, bh = 32.0f * zoomFactor;

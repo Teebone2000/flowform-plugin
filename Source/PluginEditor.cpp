@@ -692,7 +692,7 @@ void FlowFormAudioProcessorEditor::timerCallback()
         compCurve.tick();
     }
 
-    // ── Saturation waveform ───────────────────────────────────────────────────
+    // ── Saturation waveform (real audio from scope) ──────────────────────────
     {
         auto* px1 = apvts.getRawParameterValue ("x1Hz");
         auto* px2 = apvts.getRawParameterValue ("x2Hz");
@@ -710,12 +710,19 @@ void FlowFormAudioProcessorEditor::timerCallback()
             auto* pOn  = apvts.getRawParameterValue ((bpre + "on").toStdString().c_str());
             if (pDrv && pMix && pOn)
             {
-                // Normalize drive (0-24 dB range assumed) and mix (0-1)
-                float driveNorm = juce::jlimit (0.0f, 1.0f, pDrv->load() / 24.0f);
+                float driveDb = pDrv->load();
+                float driveNorm = juce::jlimit (0.0f, 1.0f, driveDb / 100.0f);
                 float mixNorm   = juce::jlimit (0.0f, 1.0f, pMix->load());
                 bool  on        = pOn->load() > 0.5f;
                 satWave.setBand (b, driveNorm, mixNorm, on);
             }
+        }
+
+        // Feed real audio data from scope fifo into the waveform display
+        {
+            float scopeBuf[512], scopeDelta[512];
+            int got = audioProcessor.getScopeFifo().peek (scopeBuf, nullptr, scopeDelta, nullptr, 512);
+            satWave.setAudioInput (scopeBuf, scopeDelta, got);
         }
         satWave.tick();
     }

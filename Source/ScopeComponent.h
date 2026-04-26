@@ -11,6 +11,7 @@ struct ScopeFifo
     void reset() { w = 0; }
     void push (const float* inL, const float* inR, const float* dL, const float* dR, int n);
     int pull (float* outL, float* outR, float* outDL, float* outDR, int max) const;
+    int peek (float* outL, float* outR, float* outDL, float* outDR, int max) const;
 private:
     std::array<float, cap> bufferL {}, bufferR {}, deltaL {}, deltaR {};
     std::atomic<int> w { 0 };

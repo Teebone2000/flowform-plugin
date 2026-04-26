@@ -297,7 +297,28 @@ public:
         if (b >= 0 && b < 4) bands[b] = { driveNorm, mixNorm, on };
     }
 
-    void tick() noexcept { offset += 2; repaint(); }
+    void setAudioInput (const float* inData, const float* deltaData, int len) noexcept
+    {
+        // Pull latest audio data into circular buffer for rendering
+        if (inData && len > 0)
+        {
+            for (int i = 0; i < juce::jmin (len, displayLen); ++i)
+            {
+                displayBuf[(readIdx + i) % displayLen] = inData[i];
+                deltaBuf[(readIdx + i) % displayLen]  = deltaData ? deltaData[i] : 0.0f;
+            }
+            readIdx = (readIdx + len) % displayLen;
+            hasData = true;
+        }
+    }
+
+    void tick() noexcept
+    {
+        // Only advance offset if we have no real audio data (fallback animation)
+        if (!hasData)
+            offset += 2;
+        repaint();
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -344,53 +365,58 @@ public:
             g.drawLine (sx[d], 0, sx[d], H, 1.5f);
 
         const float ctr = H * 0.5f;
-        const int   pts = juce::jmax (2, (int) W);
 
-        for (int b = 0; b < 4; ++b)
+        // Draw real audio from displayBuf when available
         {
-            float xS = bx[b], xE = bx[b+1];
-            float alpha = bands[b].on ? 1.0f : 0.12f;
-
-            // Fundamental — blue
+            juce::Path inPath;
+            bool inFirst = true;
+            for (int xi = 0; xi < (int)W && xi < displayLen; ++xi)
             {
-                juce::Path p;
-                bool first = true;
-                for (int xi = (int)xS; xi < (int)xE && xi < pts; ++xi)
+                int bufIdx = (readIdx + xi) % displayLen;
+                float val = displayBuf[bufIdx];
+                float amp = val * H * 0.42f;
+                float y = ctr - juce::jlimit (-ctr, ctr, amp);
+                if (inFirst) { inPath.startNewSubPath ((float)xi, y); inFirst = false; }
+                else          inPath.lineTo ((float)xi, y);
+            }
+            g.setColour (juce::Colour (0xff00bfff).withAlpha (hasData ? 0.85f : 0.12f));
+            g.strokePath (inPath, juce::PathStrokeType (1.4f));
+
+            // Delta (change from processing) in red
+            if (hasData)
+            {
+                juce::Path dPath;
+                bool dFirst = true;
+                for (int xi = 0; xi < (int)W && xi < displayLen; ++xi)
                 {
-                    float amp = (b == 1 || b == 2) ? H * 0.40f : H * 0.22f;
-                    float y = ctr
-                        + std::sin ((xi + offset) * 0.020f) * amp * 0.50f
-                        + std::sin ((xi + offset) * 0.040f) * amp * 0.20f
-                        + std::sin ((xi + offset) * 0.010f) * amp * 0.30f;
-                    if (first) { p.startNewSubPath ((float)xi, y); first = false; }
-                    else        p.lineTo ((float)xi, y);
+                    int bufIdx = (readIdx + xi) % displayLen;
+                    float val = deltaBuf[bufIdx] * 2.0f; // amplify delta for visibility
+                    float amp = val * H * 0.20f;
+                    float y = ctr - juce::jlimit (-ctr, ctr, amp);
+                    if (dFirst) { dPath.startNewSubPath ((float)xi, y); dFirst = false; }
+                    else         dPath.lineTo ((float)xi, y);
                 }
-                g.setColour (juce::Colour (0xff00bfff).withAlpha (0.90f * alpha));
-                g.strokePath (p, juce::PathStrokeType (1.5f));
+                g.setColour (juce::Colour (0xffff4444).withAlpha (0.60f));
+                g.strokePath (dPath, juce::PathStrokeType (0.8f));
             }
 
-            // Harmonics — red, driven by drive × mix
-            float intensity = bands[b].drive * bands[b].mix;
-            if (intensity > 0.01f && bands[b].on)
+            // Fallback: synthetic animation when no real audio
+            if (!hasData)
             {
-                for (int h = 2; h <= 4; ++h)
+                for (int b = 0; b < 4; ++b)
                 {
-                    juce::Path hp;
-                    bool first = true;
-                    float hAlpha = juce::jlimit (0.0f, 1.0f, intensity * 0.4f / h);
-                    for (int xi = (int)xS; xi < (int)xE && xi < pts; ++xi)
+                    float xS = bx[b], xE = bx[b+1];
+                    juce::Path fp;
+                    bool fFirst = true;
+                    float amp = H * 0.25f;
+                    for (int xi = (int)xS; xi < (int)xE; ++xi)
                     {
-                        float amp  = (b == 1 || b == 2) ? H * 0.40f : H * 0.22f;
-                        float hAmp = amp * intensity * (0.50f / h);
-                        float y = ctr
-                            + std::sin ((xi + offset) * 0.020f * h) * hAmp * 0.6f
-                            + std::sin ((xi + offset) * 0.020f * h * 1.5f) * hAmp * 0.3f
-                            + std::sin ((xi + offset) * 0.020f * h * 0.7f) * hAmp * 0.2f;
-                        if (first) { hp.startNewSubPath ((float)xi, y); first = false; }
-                        else        hp.lineTo ((float)xi, y);
+                        float y = ctr + std::sin ((xi + offset) * 0.020f) * amp * 0.5f;
+                        if (fFirst) { fp.startNewSubPath ((float)xi, y); fFirst = false; }
+                        else         fp.lineTo ((float)xi, y);
                     }
-                    g.setColour (juce::Colour (0xffff3232).withAlpha (hAlpha));
-                    g.strokePath (hp, juce::PathStrokeType (0.8f));
+                    g.setColour (juce::Colour (0xff00bfff).withAlpha (0.20f));
+                    g.strokePath (fp, juce::PathStrokeType (1.0f));
                 }
             }
         }
@@ -408,9 +434,24 @@ private:
     BandParams bands[4];
     int        offset   = 0;
 
+    // Real audio display buffer
+    static constexpr int displayLen = 1024;
+    float      displayBuf[displayLen] = {0};
+    float      deltaBuf[displayLen]   = {0};
+    int        readIdx = 0;
+    bool       hasData = false;
+
     static juce::String formatFreq (float hz)
     {
         return hz >= 1000.0f ? juce::String (hz / 1000.0f, 1) + "k"
                              : juce::String ((int)hz) + "Hz";
+    }
+
+    float splineInterp (const float* buf, float idx, int len) const
+    {
+        int i0 = (int) idx % len;
+        int i1 = (i0 + 1) % len;
+        float t = idx - (float)(int)idx;
+        return buf[i0] * (1.0f - t) + buf[i1] * t;
     }
 };

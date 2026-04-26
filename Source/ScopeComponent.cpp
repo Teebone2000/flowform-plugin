@@ -14,6 +14,23 @@ void ScopeFifo::push (const float* inL, const float* inR, const float* dL, const
     w = (w + n) % cap;
 }
 
+int ScopeFifo::peek (float* outL, float* outR, float* outDL, float* outDR, int max) const
+{
+    // Same as pull but doesn't advance read pointer — non-consuming read
+    const auto cap = (int) bufferL.size();
+    int rp = w.load();
+    int count = std::min (max, cap);
+    for (int i = 0; i < count; ++i)
+    {
+        int idx = (rp + i) % cap;
+        outL[i]  = bufferL[(size_t) idx];
+        outR[i]  = bufferR[(size_t) idx];
+        outDL[i] = deltaL[(size_t) idx];
+        outDR[i] = deltaR[(size_t) idx];
+    }
+    return count;
+}
+
 int ScopeFifo::pull (float* outL, float* outR, float* outDL, float* outDR, int max) const
 {
     const auto cap = (int) bufferL.size();

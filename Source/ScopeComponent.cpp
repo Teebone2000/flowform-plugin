@@ -23,10 +23,10 @@ int ScopeFifo::peek (float* outL, float* outR, float* outDL, float* outDR, int m
     for (int i = 0; i < count; ++i)
     {
         int idx = (rp + i) % cap;
-        outL[i]  = bufferL[(size_t) idx];
-        outR[i]  = bufferR[(size_t) idx];
-        outDL[i] = deltaL[(size_t) idx];
-        outDR[i] = deltaR[(size_t) idx];
+        if (outL)  outL[i]  = bufferL[(size_t) idx];
+        if (outR)  outR[i]  = bufferR[(size_t) idx];
+        if (outDL) outDL[i] = deltaL[(size_t) idx];
+        if (outDR) outDR[i] = deltaR[(size_t) idx];
     }
     return count;
 }

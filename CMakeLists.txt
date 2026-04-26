@@ -55,7 +55,6 @@ target_include_directories(FlowForm PRIVATE
 target_link_libraries(FlowForm PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp
-    juce::juce_gui_extra
     PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

@@ -279,76 +279,72 @@ FlowFormAudioProcessorEditor::~FlowFormAudioProcessorEditor() { juce::LookAndFee
 
 void FlowFormAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    const float f = zoomFactor;
     const int w = getWidth();
     const int h = getHeight();
-    const int topH = juce::roundToInt (48 * zoomFactor);
+    const int topH = juce::roundToInt (48.0f * f);
 
-    // Outer glow border (Figma: 0 0 0 0.5px rgb(0,191,255), 0 8px 32px rgba(0,0,0,0.8))
-    {
-        g.setColour (juce::Colour (0xff1a1a1a));
-        g.fillRect (0, 0, w, h);
-    }
+    // ── Full window: black outer border ──
+    g.setColour (juce::Colour (0xff000000));
+    g.fillRect (0, 0, w, h);
 
-    // Main inner container (Figma: bg-gradient-to-b from-gray-800 to-gray-900, p-6 = 24px)
+    // ── Main inner container: gradient gray-800 → gray-900 ──
     {
-        auto inner = juce::Rectangle<float> (12.0f, 12.0f, w - 24.0f, h - 24.0f);
-        juce::ColourGradient bg (juce::Colour (0xff252525), 0, 0,
-                                 juce::Colour (0xff111827), 0, (float) h, false);
-        g.setGradientFill (bg);
+        auto inner = juce::Rectangle<float> (1.0f, 1.0f, w - 2.0f, h - 2.0f);
+        // Gradient from from-#252525 (gray-800) to #111827 (gray-900)
+        juce::ColourGradient bgGrad (juce::Colour (0xff252525), 0.0f, 0.0f,
+                                     juce::Colour (0xff111827), 0.0f, (float) h, false);
+        g.setGradientFill (bgGrad);
         g.fillRoundedRectangle (inner, 12.0f);
 
-        // Electric blue glow border around main container
-        g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT).withAlpha (0.25f));
-        g.drawRoundedRectangle (inner, 12.0f, 1.0f);
+        // Outer electric blue glow border (Figma: 0 0 0 0.5px rgb(0,191,255))
+        g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT).withAlpha (0.40f));
+        g.drawRoundedRectangle (inner, 12.0f, 1.5f);
     }
 
-    // Panel backgrounds (drawn after main container, inside the reduced area)
+    // ── Panel backgrounds ──
     for (auto& pb : panelBounds)
         if (! pb.isEmpty())
             DigitalCapersLNF::drawPanel (g, pb);
 
-    // Top bar (drawn after panels so it always overlaps the top edge)
+    // ── Top header bar (#141414) ──
     g.setColour (juce::Colour (DigitalCapersLNF::COL_TOPBAR_BG));
-    g.fillRect (0, 0, w, topH);
-    g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT).withAlpha (0.15f));
-    g.drawLine (0.0f, (float) topH, (float) w, (float) topH, 1.0f);
+    g.fillRect (2.0f, 2.0f, (float) (w - 4), (float) topH);
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT).withAlpha (0.12f));
+    g.drawLine (2.0f, (float) (2 + topH), (float) (w - 2), (float) (2 + topH), 1.0f);
 
-    // ── FLOWFORM badge ─────────────────────────────────────────────────────────
-    const float bx = 10.0f * zoomFactor, bh = 32.0f * zoomFactor;
-    const float by = (topH - bh) * 0.5f,  bw = 120.0f * zoomFactor;
-    auto badge = juce::Rectangle<float> (bx, by, bw, bh);
-    g.setColour (juce::Colour (0xff0d1117));
-    g.fillRoundedRectangle (badge, 5.0f * zoomFactor);
-    g.setColour (juce::Colour (DigitalCapersLNF::COL_ACCENT));
-    g.drawRoundedRectangle (badge, 5.0f * zoomFactor, 1.5f);
-    g.setColour (juce::Colours::white);
-    g.setFont (juce::FontOptions (15.0f * zoomFactor).withStyle ("Bold"));
-    g.drawText ("FLOWFORM", badge.toNearestInt(), juce::Justification::centred);
+    // ── DIGITAL CAPERS badge (Figma: linear-gradient #00bfff → #008cc8) ──
+    {
+        const float bx = 8.0f * f, bh = 30.0f * f;
+        const float by = 2.0f + (topH - bh) * 0.5f, bw = 140.0f * f;
+        auto badge = juce::Rectangle<float> (bx, by, bw, bh);
+        // Cyan gradient
+        juce::ColourGradient logoGrad (juce::Colour (DigitalCapersLNF::COL_ACCENT), bx, by,
+                                       juce::Colour (0xff008cc8), bx + bw, by + bh, false);
+        g.setGradientFill (logoGrad);
+        g.fillRoundedRectangle (badge, 4.0f);
+        // Inner highlight (inset 0 1px 0 rgba(255,255,255,0.3))
+        g.setColour (juce::Colours::white.withAlpha (0.12f));
+        g.drawRoundedRectangle (badge.reduced (1.0f), 4.0f, 1.0f);
+        // Black text
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (13.0f * f, juce::Font::bold));
+        g.drawText ("DIGITAL CAPERS", badge.toNearestInt(), juce::Justification::centred);
+    }
 
-    // "by Digital Capers" subtitle
-    g.setColour (juce::Colour (DigitalCapersLNF::COL_LABEL));
-    g.setFont (juce::FontOptions (9.5f * zoomFactor));
-    g.drawText ("by Digital Capers",
-                juce::roundToInt ((bx + bw + 10.0f * zoomFactor)),
-                juce::roundToInt (by + bh * 0.25f),
-                juce::roundToInt (140.0f * zoomFactor),
-                juce::roundToInt (bh * 0.5f),
-                juce::Justification::centredLeft);
-
-    // Master panel dB scale (drawn over the masterDbScale label bounds)
+    // ── Master panel dB scale ──
     if (masterDbScale.getWidth() > 0)
     {
         auto sb = masterDbScale.getBounds();
-        g.setFont (juce::FontOptions (7.5f * zoomFactor));
-        g.setColour (juce::Colours::white.withAlpha (0.75f));
+        g.setFont (juce::FontOptions (7.5f * f));
+        g.setColour (juce::Colours::white.withAlpha (0.70f));
         static const float dbMarks[] = { 0.0f, -6.0f, -12.0f, -18.0f, -24.0f, -30.0f, -40.0f, -60.0f };
         for (float db : dbMarks)
         {
             float norm = (db + 60.0f) / 60.0f;
-            int   y    = sb.getBottom() - juce::roundToInt (norm * sb.getHeight());
-            g.drawText (db == 0.0f ? "0" : juce::String ((int)db),
-                        sb.getX(), y - 5, sb.getWidth(), 10,
-                        juce::Justification::left);
+            int y = sb.getBottom() - juce::roundToInt (norm * sb.getHeight());
+            g.drawText (db == 0.0f ? "0" : juce::String ((int) db),
+                        sb.getX(), y - 5, sb.getWidth(), 10, juce::Justification::left);
         }
     }
 }

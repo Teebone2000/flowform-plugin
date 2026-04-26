@@ -29,10 +29,8 @@ private:
 
     // ===== Helpers =====
     static juce::Colour accent() { return juce::Colour::fromRGB (0, 191, 255); }
-    void addScrews (juce::Graphics&, juce::Rectangle<float>);
     void styleKnob (juce::Slider&, int sizePx = 56);
     void styleFader (juce::Slider&);
-    void styleToggle (juce::ToggleButton&, bool isDelta = false);
     void styleLabel (juce::Label&, float fontSize = 9.0f);
 
     // ===== Header =====

@@ -178,14 +178,22 @@ void FlowFormAudioProcessorEditor::loadUI()
         auto html = uiDir.getChildFile ("index.html");
         if (html.existsAsFile())
         {
-            // Use the resource provider root so all relative asset paths resolve correctly
-            webView.goToURL (juce::WebBrowserComponent::getResourceProviderRoot() + "index.html");
+            // Load via resource provider root so asset requests get intercepted
+            auto url = juce::WebBrowserComponent::getResourceProviderRoot() + "index.html";
+            webView.goToURL (url);
             uiLoaded = true;
-            DBG ("[FlowForm] WebUI loaded through resource provider");
+            DBG ("[FlowForm] WebUI loaded: " + url);
             return;
         }
+        else
+        {
+            DBG ("[FlowForm] index.html not found in " + uiDir.getFullPathName());
+        }
     }
-    DBG ("[FlowForm] ERROR: WebUI/index.html not found");
+    else
+    {
+        DBG ("[FlowForm] WebUI dir not found");
+    }
 }
 
 //==============================================================================

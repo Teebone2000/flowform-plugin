@@ -58,7 +58,7 @@ private:
     float harmonics = 24.0f;  // 0-100
     float shape = 18.0f;      // 0-100
     float depth = 24.0f;      // 0-100
-    float globalMix = 100.0f; // 0-100%
+    float globalMix = 1.0f;   // 0..1
     float outputTrimDb = -19.0f;
     
     // Derived parameters

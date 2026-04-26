@@ -1,9 +1,7 @@
 #include "CompressorProcessor.h"
 
-//==============================================================================
 CompressorProcessor::CompressorProcessor()
 {
-    // Initialize with default values from Figma
     thresholdDb = -19.4f;
     ratio = 1.81f;
     attackMs = 6.3f;
@@ -18,324 +16,224 @@ CompressorProcessor::CompressorProcessor()
 void CompressorProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 {
     this->spec = spec;
-    
-    // Prepare sidechain filters
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(spec.sampleRate, sidechainHPF);
-    sidechainFilterL.coefficients = coeffs;
-    sidechainFilterR.coefficients = coeffs;
-    
-    // Prepare lookahead buffer
-    lookaheadBuffer.setSize(spec.numChannels, lookaheadSamples);
-    
-    // Calculate attack/release coefficients
+
+    // Per-channel SC HPF filters
+    auto scCoeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass (spec.sampleRate, sidechainHPF);
+    for (auto& f : scFilter) f.coefficients = scCoeffs;
+
+    lookaheadBuffer.setSize ((int) spec.numChannels, lookaheadSamples);
     updateParameters();
-    
     reset();
 }
 
 void CompressorProcessor::process(juce::AudioBuffer<float>& buffer)
 {
-    if (!enabled)
-        return;
-    
-    const auto numSamples = buffer.getNumSamples();
-    const auto numChannels = buffer.getNumChannels();
-    
-    if (numChannels < 2)
-    {
-        // Mono processing
-        processStereo(buffer);
-        return;
-    }
-    
-    switch (msMode)
-    {
-        case STEREO:
-        case MID:
-        case SIDE:
-        case M_TO_S:
-        case S_TO_M:
-            processMidSide(buffer);
-            break;
-        default:
-            processStereo(buffer);
-            break;
-    }
+    if (!enabled) return;
+
+    if (buffer.getNumChannels() < 1) return;
+
+    if (msMode == STEREO || buffer.getNumChannels() < 2)
+        processStereo (buffer);
+    else
+        processMidSide (buffer);
 }
 
 void CompressorProcessor::reset()
 {
-    envelopeL = 0.0f;
-    envelopeR = 0.0f;
-    envelopeM = 0.0f;
-    envelopeS = 0.0f;
+    envelope.fill (0.0f);
     currentGR = 0.0f;
     inputLevel = -60.0f;
     outputLevel = -60.0f;
-    
-    sidechainFilterL.reset();
-    sidechainFilterR.reset();
+    scFilter[0].reset();
+    scFilter[1].reset();
     lookaheadBuffer.clear();
 }
 
-//==============================================================================
-void CompressorProcessor::setThreshold(float thresholdDb)
-{
-    this->thresholdDb = thresholdDb;
-}
+void CompressorProcessor::setThreshold(float t) { thresholdDb = t; }
+void CompressorProcessor::setRatio(float r)     { ratio = juce::jmax (1.0f, r); }
 
-void CompressorProcessor::setRatio(float ratio)
+void CompressorProcessor::setAttack(float ms)
 {
-    this->ratio = juce::jmax(1.0f, ratio);
-}
-
-void CompressorProcessor::setAttack(float attackMs)
-{
-    this->attackMs = attackMs;
+    attackMs = ms;
     updateParameters();
 }
 
-void CompressorProcessor::setRelease(float releaseMs)
+void CompressorProcessor::setRelease(float ms)
 {
-    this->releaseMs = releaseMs;
+    releaseMs = ms;
     updateParameters();
 }
 
-void CompressorProcessor::setMakeup(float makeupDb)
+void CompressorProcessor::setMakeup(float db)       { makeupDb = db; }
+
+void CompressorProcessor::setSidechainHPF(float f)
 {
-    this->makeupDb = makeupDb;
+    sidechainHPF = f;
+    auto c = juce::dsp::IIR::Coefficients<float>::makeHighPass (spec.sampleRate, f);
+    scFilter[0].coefficients = c;
+    scFilter[1].coefficients = c;
 }
 
-void CompressorProcessor::setSidechainHPF(float freqHz)
-{
-    sidechainHPF = freqHz;
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(spec.sampleRate, sidechainHPF);
-    sidechainFilterL.coefficients = coeffs;
-    sidechainFilterR.coefficients = coeffs;
-}
+void CompressorProcessor::setStereoLink(float p)    { stereoLink = p; }
 
-void CompressorProcessor::setStereoLink(float linkPercent)
+void CompressorProcessor::setCompType(CompType t)
 {
-    stereoLink = linkPercent;
-}
-
-void CompressorProcessor::setCompType(CompType type)
-{
-    compType = type;
-    
-    // Adjust knee based on type
+    compType = t;
     switch (compType)
     {
-        case CLASSIC:  kneeWidth = 6.0f; break;
-        case MODERN:   kneeWidth = 3.0f; break;
-        case VINTAGE:  kneeWidth = 10.0f; break;
-        default:       kneeWidth = 6.0f; break;
+        case CLASSIC: kneeWidth = 6.0f;  break;
+        case MODERN:  kneeWidth = 3.0f;  break;
+        case VINTAGE: kneeWidth = 10.0f; break;
+        default:      kneeWidth = 6.0f;  break;
     }
 }
 
-void CompressorProcessor::setMSMode(MSMode mode)
-{
-    msMode = mode;
-}
+void CompressorProcessor::setMSMode(MSMode m) { msMode = m; }
 
-//==============================================================================
 void CompressorProcessor::updateParameters()
 {
-    // Convert attack/release times to coefficients
-    attackCoeff = std::exp(-1.0f / (attackMs * 0.001f * spec.sampleRate));
-    releaseCoeff = std::exp(-1.0f / (releaseMs * 0.001f * spec.sampleRate));
+    float atkS = attackMs * 0.001f;
+    float relS = releaseMs * 0.001f;
+    attackCoeff  = std::exp (-1.0f / (atkS * (float) spec.sampleRate));
+    releaseCoeff = std::exp (-1.0f / (relS * (float) spec.sampleRate));
 }
 
+// ── Stereo compressor with envelope follower ─────────────────────────────
 void CompressorProcessor::processStereo(juce::AudioBuffer<float>& buffer)
 {
-    const auto numSamples = buffer.getNumSamples();
-    const auto numChannels = buffer.getNumChannels();
-    
-    auto* left = buffer.getWritePointer(0);
-    auto* right = buffer.getWritePointer(1);
-    
-    float peakL = 0.0f;
-    float peakR = 0.0f;
-    
-    for (int i = 0; i < numSamples; ++i)
+    const auto n = buffer.getNumSamples();
+    const bool isStereo = buffer.getNumChannels() > 1;
+
+    auto* L = buffer.getWritePointer (0);
+    auto* R = isStereo ? buffer.getWritePointer (1) : L;
+
+    // makeupLin was here
+    float linkFactor = stereoLink * 0.01f;
+
+    for (int i = 0; i < n; ++i)
     {
-        // Get input samples
-        float inL = left[i];
-        float inR = right[i];
-        
-        // Update input level (RMS)
-        inputLevel = 0.999f * inputLevel + 0.001f * (std::abs(inL) + std::abs(inR)) * 0.5f;
-        
-        // Sidechain filtering
-        float scL = sidechainFilterL.processSample(inL);
-        float scR = sidechainFilterR.processSample(inR);
-        
-        // Calculate envelope (peak detection)
-        float envL = std::abs(scL);
-        float envR = std::abs(scR);
-        
-        // Apply attack/release
-        envelopeL = (envL > envelopeL) ? 
-                   attackCoeff * envelopeL + (1.0f - attackCoeff) * envL :
-                   releaseCoeff * envelopeL + (1.0f - releaseCoeff) * envL;
-        
-        envelopeR = (envR > envelopeR) ?
-                   attackCoeff * envelopeR + (1.0f - attackCoeff) * envR :
-                   releaseCoeff * envelopeR + (1.0f - releaseCoeff) * envR;
-        
+        float inL = L[i];
+        float inR = R[i];
+
+        // Sidechain HPF
+        float scL = scFilter[0].processSample (inL);
+        float scR = isStereo ? scFilter[1].processSample (inR) : scL;
+
+        // Peak detector envelope (per channel)
+        float absL = std::abs (scL);
+        float absR = std::abs (scR);
+
+        float envL = (absL > envelope[0]) ? attackCoeff * envelope[0] + (1.0f - attackCoeff) * absL
+                                          : releaseCoeff * envelope[0] + (1.0f - releaseCoeff) * absL;
+        float envR = (absR > envelope[1]) ? attackCoeff * envelope[1] + (1.0f - attackCoeff) * absR
+                                          : releaseCoeff * envelope[1] + (1.0f - releaseCoeff) * absR;
+        envelope[0] = envL;
+        envelope[1] = envR;
+
         // Convert to dB
-        float dbL = 20.0f * std::log10(envelopeL + 1e-6f);
-        float dbR = 20.0f * std::log10(envelopeR + 1e-6f);
-        
-        // Stereo linking
-        float linkedDb = (stereoLink * 0.01f) * (dbL + dbR) * 0.5f + 
-                        (1.0f - stereoLink * 0.01f) * dbL;
-        
-        // Calculate gain reduction
-        float gr = calculateGainReduction(linkedDb, thresholdDb, ratio, kneeWidth);
-        
-        // Apply makeup gain
-        float makeupGain = std::pow(10.0f, makeupDb / 20.0f);
-        
-        // Apply gain reduction with makeup
-        float gain = std::pow(10.0f, (gr + makeupDb) / 20.0f);
-        
-        left[i] *= gain;
-        right[i] *= gain;
-        
-        // Update gain reduction meter
-        currentGR = 0.995f * currentGR + 0.005f * gr;
-        
-        // Update output level
-        outputLevel = 0.999f * outputLevel + 0.001f * (std::abs(left[i]) + std::abs(right[i])) * 0.5f;
-        
-        // Track peaks for display
-        peakL = std::max(peakL, std::abs(left[i]));
-        peakR = std::max(peakR, std::abs(right[i]));
+        float envLin = envL * (1.0f - linkFactor) + (envL + envR) * 0.5f * linkFactor;
+        float envDb = 20.0f * std::log10 (envLin + 1e-12f);
+
+        // Gain reduction in dB
+        float grDb = calculateGainReduction (envDb, thresholdDb, ratio, kneeWidth);
+
+        // Apply gain + makeup
+        float gainLin = std::pow (10.0f, (grDb + makeupDb) / 20.0f);
+        L[i] *= gainLin;
+        if (isStereo) R[i] *= gainLin;
+
+        // Metering
+        currentGR = 0.995f * currentGR + 0.005f * grDb;
     }
 }
 
+// ── M/S processing ──────────────────────────────────────────────────────
 void CompressorProcessor::processMidSide(juce::AudioBuffer<float>& buffer)
 {
-    const auto numSamples = buffer.getNumSamples();
-    
-    auto* left = buffer.getWritePointer(0);
-    auto* right = buffer.getWritePointer(1);
-    
-    // Temporary mid/side buffers
-    juce::HeapBlock<float> mid(numSamples);
-    juce::HeapBlock<float> side(numSamples);
-    
-    // Encode to Mid/Side
-    for (int i = 0; i < numSamples; ++i)
+    const auto n = buffer.getNumSamples();
+    auto* L = buffer.getWritePointer (0);
+    auto* R = buffer.getWritePointer (1);
+
+    juce::HeapBlock<float> mid (n), side (n);
+
+    // Encode M/S
+    for (int i = 0; i < n; ++i)
     {
-        mid[i] = (left[i] + right[i]) * 0.5f;
-        side[i] = (left[i] - right[i]) * 0.5f;
+        mid[i]  = (L[i] + R[i]) * 0.5f;
+        side[i] = (L[i] - R[i]) * 0.5f;
     }
-    
-    // Process based on MS mode
-    float grMid = 0.0f;
-    float grSide = 0.0f;
-    
+
+        auto compressChannel = [&] (float* buf, size_t chIdx, int nSmp)
+    {
+        for (int i = 0; i < nSmp; ++i)
+        {
+            float absV = std::abs (buf[i]);
+            float env = (absV > envelope[chIdx]) ? attackCoeff * envelope[chIdx] + (1.0f - attackCoeff) * absV
+                                                 : releaseCoeff * envelope[chIdx] + (1.0f - releaseCoeff) * absV;
+            envelope[chIdx] = env;
+            float envDb = 20.0f * std::log10 (env + 1e-12f);
+            float grDb = calculateGainReduction (envDb, thresholdDb, ratio, kneeWidth);
+            buf[i] *= std::pow (10.0f, (grDb + makeupDb) / 20.0f);
+            currentGR = 0.995f * currentGR + 0.005f * grDb;
+        }
+    };
+
     switch (msMode)
     {
-        case MID:
-            // Only compress mid
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float db = 20.0f * std::log10(std::abs(mid[i]) + 1e-6f);
-                grMid = calculateGainReduction(db, thresholdDb, ratio, kneeWidth);
-                float gain = std::pow(10.0f, (grMid + makeupDb) / 20.0f);
-                mid[i] *= gain;
-            }
-            break;
-            
-        case SIDE:
-            // Only compress side
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float db = 20.0f * std::log10(std::abs(side[i]) + 1e-6f);
-                grSide = calculateGainReduction(db, thresholdDb, ratio, kneeWidth);
-                float gain = std::pow(10.0f, (grSide + makeupDb) / 20.0f);
-                side[i] *= gain;
-            }
-            break;
-            
+        case MID:   compressChannel (mid,  0, n); break;
+        case SIDE:  compressChannel (side, 1, n); break;
         case M_TO_S:
-            // Use mid to control side compression
-            for (int i = 0; i < numSamples; ++i)
+        {
+            // Mid controls side compression
+            for (int i = 0; i < n; ++i)
             {
-                float dbMid = 20.0f * std::log10(std::abs(mid[i]) + 1e-6f);
-                grMid = calculateGainReduction(dbMid, thresholdDb, ratio, kneeWidth);
-                float gain = std::pow(10.0f, (grMid + makeupDb) / 20.0f);
-                side[i] *= gain;
+                float absM = std::abs (mid[i]);
+                float envM = (absM > envelope[0]) ? attackCoeff * envelope[0] + (1.0f - attackCoeff) * absM
+                                                  : releaseCoeff * envelope[0] + (1.0f - releaseCoeff) * absM;
+                envelope[0] = envM;
+                float gr = calculateGainReduction (20.0f * std::log10 (envM + 1e-12f), thresholdDb, ratio, kneeWidth);
+                float g = std::pow (10.0f, (gr + makeupDb) / 20.0f);
+                side[i] *= g;
             }
             break;
-            
+        }
         case S_TO_M:
-            // Use side to control mid compression
-            for (int i = 0; i < numSamples; ++i)
+        {
+            for (int i = 0; i < n; ++i)
             {
-                float dbSide = 20.0f * std::log10(std::abs(side[i]) + 1e-6f);
-                grSide = calculateGainReduction(dbSide, thresholdDb, ratio, kneeWidth);
-                float gain = std::pow(10.0f, (grSide + makeupDb) / 20.0f);
-                mid[i] *= gain;
+                float absS = std::abs (side[i]);
+                float envS = (absS > envelope[1]) ? attackCoeff * envelope[1] + (1.0f - attackCoeff) * absS
+                                                  : releaseCoeff * envelope[1] + (1.0f - releaseCoeff) * absS;
+                envelope[1] = envS;
+                float gr = calculateGainReduction (20.0f * std::log10 (envS + 1e-12f), thresholdDb, ratio, kneeWidth);
+                float g = std::pow (10.0f, (gr + makeupDb) / 20.0f);
+                mid[i] *= g;
             }
             break;
-            
-        case STEREO:
-        default:
-            // Compress both independently
-            for (int i = 0; i < numSamples; ++i)
-            {
-                float dbMid = 20.0f * std::log10(std::abs(mid[i]) + 1e-6f);
-                float dbSide = 20.0f * std::log10(std::abs(side[i]) + 1e-6f);
-                
-                grMid = calculateGainReduction(dbMid, thresholdDb, ratio, kneeWidth);
-                grSide = calculateGainReduction(dbSide, thresholdDb, ratio, kneeWidth);
-                
-                float gainMid = std::pow(10.0f, (grMid + makeupDb) / 20.0f);
-                float gainSide = std::pow(10.0f, (grSide + makeupDb) / 20.0f);
-                
-                mid[i] *= gainMid;
-                side[i] *= gainSide;
-            }
-            break;
+        }
+        default: break;
     }
-    
-    // Decode back to Left/Right
-    for (int i = 0; i < numSamples; ++i)
+
+    // Decode back
+    for (int i = 0; i < n; ++i)
     {
-        left[i] = mid[i] + side[i];
-        right[i] = mid[i] - side[i];
-        
-        // Update gain reduction
-        currentGR = 0.995f * currentGR + 0.005f * std::max(grMid, grSide);
-        
-        // Update levels
-        inputLevel = 0.999f * inputLevel + 0.001f * (std::abs(mid[i]) + std::abs(side[i])) * 0.5f;
-        outputLevel = 0.999f * outputLevel + 0.001f * (std::abs(left[i]) + std::abs(right[i])) * 0.5f;
+        L[i] = mid[i] + side[i];
+        R[i] = mid[i] - side[i];
     }
 }
 
-float CompressorProcessor::calculateGainReduction(float levelDb, float thresholdDb, float ratio, float kneeWidth)
+// ── Gain reduction calculation ──────────────────────────────────────────
+float CompressorProcessor::calculateGainReduction(float lvlDb, float thrDb, float rat, float knee)
 {
-    if (levelDb <= thresholdDb - kneeWidth * 0.5f)
-    {
-        // Below knee - no compression
+    if (lvlDb <= thrDb - knee * 0.5f)
         return 0.0f;
-    }
-    else if (levelDb >= thresholdDb + kneeWidth * 0.5f)
-    {
-        // Above knee - full compression
-        return (thresholdDb - levelDb) * (1.0f - 1.0f / ratio);
-    }
-    else
-    {
-        // In knee region - smooth transition
-        float x = levelDb - (thresholdDb - kneeWidth * 0.5f);
-        float knee = x / kneeWidth;
-        float curve = 1.0f - 1.0f / ratio;
-        return -kneeWidth * 0.5f * curve * knee * knee;
-    }
+
+    if (lvlDb >= thrDb + knee * 0.5f)
+        return (thrDb - lvlDb) * (1.0f - 1.0f / rat);
+
+    // Knee region: quadratic transition
+    float x = lvlDb - (thrDb - knee * 0.5f);
+    float t = x / knee;
+    float curve = 1.0f - 1.0f / rat;
+    return -knee * 0.5f * curve * t * t;
 }

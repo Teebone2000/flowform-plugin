@@ -38,7 +38,7 @@ private:
     // ===== Header =====
     juce::Label logo { {}, "DIGITAL CAPERS" };
     juce::ComboBox presetBox, oversampleBox, zoomBox;
-    juce::TextButton abButton { "A" }, undoBtn { "←" }, redoBtn { "→" };
+    juce::TextButton abButton { "A/B" }, undoBtn { "Undo" }, redoBtn { "Redo" };
     juce::ToggleButton bypassBtn { "BYPASS" }, deltaBtn { "Δ" }, compBtn { "COMP" };
 
     // ===== Scope =====

@@ -39,7 +39,7 @@ FlowFormAudioProcessorEditor::SatBand::SatBand (APVTS& s, int bIdx) : band (bIdx
     title.setColour (juce::Label::textColourId, juce::Colours::white.withAlpha (0.85f));
     addAndMakeVisible (title);
     addAndMakeVisible (onBtn); addAndMakeVisible (soloBtn); addAndMakeVisible (deltaBtn);
-    algo.addItem ("Tube",1); algo.addItem ("Tape",2); algo.addItem ("Solid",3); algo.addItem ("Xfmr",4);
+    algo.addItem ("Tube",1); algo.addItem ("Tape",2); algo.addItem ("Solid-State",3); algo.addItem ("Xfmr",4);
     addAndMakeVisible (algoLbl); addAndMakeVisible (algo);
     for (auto* l : { &driveLbl, &mixLbl, &msLbl, &algoLbl })
         { l->setJustificationType (juce::Justification::centred); l->setColour (juce::Label::textColourId, accent().withAlpha (0.85f)); l->setFont (juce::FontOptions (8).withStyle ("Bold")); addAndMakeVisible (*l); }
@@ -50,13 +50,28 @@ FlowFormAudioProcessorEditor::SatBand::SatBand (APVTS& s, int bIdx) : band (bIdx
     msFocus.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     msFocus.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::black.withAlpha (0.55f));
     addAndMakeVisible (msFocus);
+
+    // Wire all controls to their APVTS parameters
+    auto pid = [bIdx] (const char* p) {
+        return ("b" + juce::String (bIdx) + "_" + juce::String (p)).toStdString();
+    };
+    aOn    = std::make_unique<BAttach> (s, pid ("on"),      onBtn);
+    aSolo  = std::make_unique<BAttach> (s, pid ("solo"),    soloBtn);
+    aDelta = std::make_unique<BAttach> (s, pid ("delta"),   deltaBtn);
+    aDrive = std::make_unique<SAttach> (s, pid ("driveDb"), drive);
+    aMix   = std::make_unique<SAttach> (s, pid ("mix"),     mix);
+    aMS    = std::make_unique<SAttach> (s, pid ("msFocus"), msFocus);
+    aAlgo  = std::make_unique<CAttach> (s, pid ("algo"),    algo);
 }
 
 void FlowFormAudioProcessorEditor::SatBand::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2);
-    g.setColour (juce::Colours::black.withAlpha (0.5f)); g.fillRoundedRectangle (r, 6);
-    g.setColour (juce::Colour::fromRGB (51,51,51)); g.drawRoundedRectangle (r, 6, 1);
+    // Fully opaque fill — prevents underlying content from bleeding through (no ghosting)
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_PANEL_BG));
+    g.fillRoundedRectangle (r, 6);
+    g.setColour (juce::Colour (DigitalCapersLNF::COL_PANEL_BORDER));
+    g.drawRoundedRectangle (r, 6, 1);
 }
 
 void FlowFormAudioProcessorEditor::SatBand::resized()
@@ -79,8 +94,6 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     logo.setVisible (false);  // drawn manually in paint() as a FLOWFORM badge
     addAndMakeVisible (presetBox); addAndMakeVisible (oversampleBox);
     addAndMakeVisible (abButton); addAndMakeVisible (undoBtn); addAndMakeVisible (redoBtn);
-    undoBtn.setButtonText ("Undo");
-    redoBtn.setButtonText ("Redo");
     bypassBtn.setButtonText ("Hard Bypass");
     compBtn.setButtonText ("Compensate");
     addAndMakeVisible (bypassBtn); addAndMakeVisible (deltaBtn); addAndMakeVisible (compBtn);
@@ -124,7 +137,8 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     addKnob (compSC, compSCLbl, 36); addKnob (compThresh, compThreshLbl, 36);
     addKnob (compRatio, compRatioLbl, 36); addKnob (compAttack, compAttackLbl, 36);
     addKnob (compRelease, compReleaseLbl, 36); addKnob (compMakeup, compMakeupLbl, 36);
-    addKnob (compStereo, compStereoLbl, 36);  // stereo link as rotary knob
+    styleFader (compStereo); addAndMakeVisible (compStereo);
+    styleLabel (compStereoLbl, 8); addAndMakeVisible (compStereoLbl);
     addAndMakeVisible (compMS); addLabel (compMSLbl);
     addAndMakeVisible (compType); addLabel (compTypeLbl);
     addToggle (compOnBtn); addToggle (compSoloBtn); addToggle (compDeltaBtn);
@@ -241,8 +255,10 @@ FlowFormAudioProcessorEditor::FlowFormAudioProcessorEditor (FlowFormAudioProcess
     };
     addAndMakeVisible (zoomBox);
 
+    addAndMakeVisible (masterDbScale);  // registered here so resized() never calls addAndMakeVisible again
+
     setResizable (false, false);
-    setSize (1400, 600);
+    setSize (1270, 620);
     startTimerHz (30);
 }
 
@@ -252,7 +268,13 @@ void FlowFormAudioProcessorEditor::paint (juce::Graphics& g)
 {
     const int topH = juce::roundToInt (48 * zoomFactor);
 
-    g.fillAll (juce::Colour (DigitalCapersLNF::COL_BG));
+    // Deep charcoal gradient — top lighter (0x252525), bottom darker (0x0f0f0f)
+    {
+        juce::ColourGradient bg (juce::Colour (0xff252525), 0, 0,
+                                 juce::Colour (0xff0f0f0f), 0, (float) getHeight(), false);
+        g.setGradientFill (bg);
+        g.fillAll();
+    }
 
     // Panel backgrounds
     for (auto& pb : panelBounds)
@@ -350,22 +372,22 @@ void FlowFormAudioProcessorEditor::resized()
         l2.setBounds (rw.removeFromTop (lh)); s2.setBounds (rw);
     };
 
-    // Panels — widths scaled to 1400px to match Figma proportions
-    // INPUT:135  COMP:215  SAT:510  LIM:155  MASTER:175  CLIP:remainder(~155)
+    // Panels — exact Figma widths: 110/178/424/130/148/125px, 11px gaps
     auto p = r;
-    const int gap = z (6);
-    int pw[6] = { z (135), z (215), z (510), z (155), z (175), 0 };
+    const int gap = z (11);
+    int pw[6] = { z (110), z (178), z (424), z (130), z (148), 0 };
     pw[5] = p.getWidth() - pw[0] - pw[1] - pw[2] - pw[3] - pw[4] - 5 * gap;
     if (pw[5] < z (100)) pw[5] = z (100);
 
     // ── Input ────────────────────────────────────────────────────────────────
-    // Layout (top to bottom): title, 4px gap, meter placeholder (120px),
-    // INPUT TRIM knob, Mono+Ø buttons, LOW PASS knob, HIGH PASS knob, VOICE knob, VOICE BIAS knob
-    // inDeltaBtn and inCompBtn are not visible in Figma — give them zero bounds
+    // Figma order: title → OVR/DYN → meters (flex-1) → TRIM → MONO+Ø → LP → HP
     auto pr = p.removeFromLeft (pw[0]); p.removeFromLeft (gap);
     panelBounds[0] = pr;
+    pr.reduce (z(3), 0);  // 3px inner padding each side
+
     inTitle.setBounds (pr.removeFromTop (z (14)));
     pr.removeFromTop (z (3));
+
     // OVR + DYN indicator row
     { auto ledRow = pr.removeFromTop (z (14));
       int  segW   = ledRow.getWidth() / 4;
@@ -374,49 +396,54 @@ void FlowFormAudioProcessorEditor::resized()
       dynLbl.setBounds (ledRow.removeFromLeft (segW));
       dynLed.setBounds (ledRow); }
     pr.removeFromTop (z (2));
-    // Reserve space for controls at bottom so meters fill the rest
-    auto bottomControls = pr;
-    // Measure how much the controls need
-    int ctrlH = z(10)+z(44)    // TRIM label+knob
-              + z(18)           // Mono+Ø
-              + z(10)+z(38)     // LP
-              + z(10)+z(38)     // HP
-              + z(10)+z(38)     // VOICE
-              + z(10)+z(38);    // BIAS
-    int meterH = juce::jmax (z(30), pr.getHeight() - ctrlH);
-    // Vertical meters (L and R) side by side
+
+    // Reserve bottom controls height, meters fill the rest
+    const int trimKnobH  = z(10) + z(48);   // label + 48px knob
+    const int btnRowH    = z(18);
+    const int lpKnobH    = z(10) + z(40);
+    const int hpKnobH    = z(10) + z(40);
+    const int ctrlH      = trimKnobH + z(4) + btnRowH + z(4) + lpKnobH + z(4) + hpKnobH;
+    const int meterH     = juce::jmax (z(30), pr.getHeight() - ctrlH - z(4));
+
+    // Vertical meters (L and R side by side)
     { auto mArea = pr.removeFromTop (meterH);
-      pr.removeFromTop (z(2));
       int mw = (mArea.getWidth() - z(4)) / 2;
       inMeterL.setBounds (mArea.removeFromLeft (mw));
       mArea.removeFromLeft (z(4));
       inMeterR.setBounds (mArea); }
-    // INPUT TRIM knob
-    { int ks = z(44);
+    pr.removeFromTop (z(4));
+
+    // TRIM knob (medium 48px body + label)
+    { int ks = z(48);
       inTrimLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
-      inTrim.setBounds    (pr.removeFromTop (z(44)).withSizeKeepingCentre (ks, ks)); }
-    // Mono + Ø buttons side by side
+      inTrim.setBounds    (pr.removeFromTop (z(48)).withSizeKeepingCentre (ks, ks)); }
+    pr.removeFromTop (z(4));
+
+    // MONO + Ø buttons side by side
     { auto btnRow = pr.removeFromTop (z(18));
-      int bw = btnRow.getWidth() / 2;
-      inMonoBtn.setBounds (btnRow.removeFromLeft (bw));
-      inPolarBtn.setBounds (btnRow); }
-    // LOW PASS knob
-    { int ks = z(38);
+      int monoW = z(36), phiW = z(24);
+      int totalBtnW = monoW + z(4) + phiW;
+      int bx = btnRow.getX() + (btnRow.getWidth() - totalBtnW) / 2;
+      inMonoBtn.setBounds  (bx, btnRow.getY(), monoW, btnRow.getHeight());
+      inPolarBtn.setBounds (bx + monoW + z(4), btnRow.getY(), phiW, btnRow.getHeight()); }
+    pr.removeFromTop (z(4));
+
+    // LOW PASS knob (small 40px)
+    { int ks = z(40);
       inLPFLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
-      inLPF.setBounds    (pr.removeFromTop (z(38)).withSizeKeepingCentre (ks, ks)); }
-    // HIGH PASS knob
-    { int ks = z(38);
+      inLPF.setBounds    (pr.removeFromTop (z(40)).withSizeKeepingCentre (ks, ks)); }
+    pr.removeFromTop (z(4));
+
+    // HIGH PASS knob (small 40px)
+    { int ks = z(40);
       inHPFLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
-      inHPF.setBounds    (pr.removeFromTop (z(38)).withSizeKeepingCentre (ks, ks)); }
-    // VOICE knob
-    { int ks = z(38);
-      inVoiceLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
-      inVoice.setBounds    (pr.removeFromTop (z(38)).withSizeKeepingCentre (ks, ks)); }
-    // VOICE BIAS knob
-    { int ks = z(38);
-      inBiasLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
-      inBias.setBounds    (pr.removeFromTop (z(38)).withSizeKeepingCentre (ks, ks)); }
-    inDeltaBtn.setBounds ({}); inCompBtn.setBounds ({});
+      inHPF.setBounds    (pr.removeFromTop (z(40)).withSizeKeepingCentre (ks, ks)); }
+
+    // Hide unused controls (not in Figma input panel)
+    inVoiceLbl.setBounds ({}); inVoice.setBounds ({});
+    inBiasLbl.setBounds ({});  inBias.setBounds ({});
+    inDeltaBtn.setBounds ({});
+    inCompBtn.setBounds ({});
 
     // ── Compressor ───────────────────────────────────────────────────────────
     // Layout (per new design):
@@ -434,25 +461,25 @@ void FlowFormAudioProcessorEditor::resized()
     // GR meter (gain reduction, fills right-to-left in red with dB scale)
     { compGRMeter.setBounds (pr.removeFromTop (z (14))); }
     pr.removeFromTop (z (4));
-    // 2×3 knob grid: SC-HPF | Stereo Link ; Thresh | Ratio ; Attack | Release
+    // 2×3 knob grid (Figma order): SC-HPF|Thresh ; Ratio|Attack ; Release|Makeup
     { int rowH = z (48);  // label(10) + knob(38)
       auto cg  = pr.removeFromTop (rowH * 3).reduced (z (1));
-      pp (cg, compSC,      compSCLbl,      compStereo,  compStereoLbl,  rowH);
-      pp (cg, compThresh,  compThreshLbl,  compRatio,   compRatioLbl,   rowH);
-      pp (cg, compAttack,  compAttackLbl,  compRelease, compReleaseLbl, rowH); }
+      pp (cg, compSC,      compSCLbl,      compThresh,  compThreshLbl,  rowH);
+      pp (cg, compRatio,   compRatioLbl,   compAttack,  compAttackLbl,  rowH);
+      pp (cg, compRelease, compReleaseLbl, compMakeup,  compMakeupLbl,  rowH); }
     pr.removeFromTop (z (4));
-    // Bottom row: MS dropdown + Comp Type dropdown + Makeup knob
-    { auto bot = pr.removeFromBottom (z (52));
-      int hf = bot.getWidth() / 3;
-      auto dropcols = bot.removeFromLeft (hf * 2);
-      auto mc = dropcols.removeFromLeft (hf);
-      compMSLbl.setBounds   (mc.removeFromTop (z (10)));  compMS.setBounds   (mc.removeFromTop (z (18)));
-      compTypeLbl.setBounds (dropcols.removeFromTop (z (10))); compType.setBounds (dropcols.removeFromTop (z (18)));
-      compMakeupLbl.setBounds (bot.removeFromTop (z (10)));
-      compMakeup.setBounds    (bot.withSizeKeepingCentre (z (36), z (36))); }
-    // Hide stereo-link fader label (now a knob)
-    compStereoLbl.setText ("S.LINK", juce::dontSendNotification);
-    // Compression waveform — fills remaining space
+    // Stereo Link — horizontal fader (Figma: directly below knob grid)
+    { compStereoLbl.setBounds (pr.removeFromTop (z (10)));
+      compStereo.setBounds    (pr.removeFromTop (z (18))); }
+    pr.removeFromTop (z (4));
+    // M/S + Comp Type dropdowns
+    { auto dr = pr.removeFromTop (z (28));
+      int hf = dr.getWidth() / 2;
+      auto mc = dr.removeFromLeft (hf);
+      compMSLbl.setBounds   (mc.removeFromTop (z (10)));  compMS.setBounds   (mc);
+      compTypeLbl.setBounds (dr.removeFromTop (z (10)));  compType.setBounds (dr); }
+    pr.removeFromTop (z (4));
+    // Compression curve — fills remaining space
     compCurve.setBounds (pr.reduced (z (2), 0));
 
     // ── Saturation ───────────────────────────────────────────────────────────
@@ -486,103 +513,103 @@ void FlowFormAudioProcessorEditor::resized()
           { satBands[(size_t)i]->setBounds (sbr.removeFromLeft (sw)); sbr.removeFromLeft (z (2)); } }
 
     // ── Limiter ──────────────────────────────────────────────────────────────
-    // On/Solo/Δ horizontal row; LIM GR + INPUT horizontal meters; knobs below
     pr = p.removeFromLeft (pw[3]); p.removeFromLeft (gap);
     panelBounds[3] = pr;
+    pr.reduce (z(3), 0);
     limitTitle.setBounds (pr.removeFromTop (z (14)));
-    { auto btnRow = pr.removeFromTop (z (20));
+    { auto btnRow = pr.removeFromTop (z (18));
       int bw3 = btnRow.getWidth() / 3;
       limitOnBtn.setBounds    (btnRow.removeFromLeft (bw3));
       limitSoloBtn.setBounds  (btnRow.removeFromLeft (bw3));
       limitDeltaBtn.setBounds (btnRow); }
     pr.removeFromTop (z (4));
-    // LIM GR meter (gain reduction, fills right-to-left in red)
-    { limGRLbl.setBounds (pr.removeFromTop (z (9)));
-      limGRMeter.setBounds (pr.removeFromTop (z (14))); }
-    pr.removeFromTop (z (3));
-    // INPUT meter (fills left-to-right in blue)
+    // INPUT meter (left to right in blue)
     { limInputLbl.setBounds (pr.removeFromTop (z (9)));
       limInputMeter.setBounds (pr.removeFromTop (z (14))); }
+    pr.removeFromTop (z (3));
+    // GR meter (right to left in red)
+    { limGRLbl.setBounds (pr.removeFromTop (z (9)));
+      limGRMeter.setBounds (pr.removeFromTop (z (14))); }
     pr.removeFromTop (z (6));
-    // CEILING — large, centred
-    { auto kw = pr.removeFromTop (z (80));
-      int  ks = juce::jmin (kw.getHeight(), z (70));
-      limitCeilingLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
-      limitCeiling.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
-    pr.removeFromTop (z (6));
-    // ATTACK + RELEASE side by side
-    { auto row = pr.removeFromTop (z (72));
-      int  hf  = row.getWidth() / 2;
-      auto lr  = row.removeFromLeft (hf);
-      int  ks  = z (52);
-      limitAttackLbl.setBounds  (lr.removeFromTop (z (11)));  limitAttack.setBounds  (lr.withSizeKeepingCentre (ks, ks - z(4)));
-      limitReleaseLbl.setBounds (row.removeFromTop (z (11))); limitRelease.setBounds (row.withSizeKeepingCentre (ks, ks - z(4))); }
-    pr.removeFromTop (z (8));
-    // THRESHOLD — large, centred
-    { auto kw = pr.removeFromTop (z (80));
-      int  ks = juce::jmin (kw.getHeight(), z (70));
-      limitThreshLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
-      limitThresh.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
-    pr.removeFromTop (z (6));
-    // GAIN — medium, centred
-    { auto kw = pr.removeFromTop (z (66));
-      int  ks = juce::jmin (kw.getHeight(), z (56));
-      limitGainLbl.setBounds (kw.removeFromTop (z (11)).withSizeKeepingCentre (kw.getWidth(), z (11)));
-      limitGain.setBounds    (kw.withSizeKeepingCentre (ks, ks - z (4))); }
+    // THRESHOLD — tiny knob (40px), centred
+    { int ks = z(40);
+      limitThreshLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
+      limitThresh.setBounds    (pr.removeFromTop (z(40)).withSizeKeepingCentre (ks, ks)); }
+    pr.removeFromTop (z(6));
+    // ATTACK + RELEASE — pair
+    { auto row = pr.removeFromTop (z (50));
+      int hf = row.getWidth() / 2; int ks = z(36);
+      auto lr = row.removeFromLeft (hf);
+      limitAttackLbl.setBounds  (lr.removeFromTop (z(10)));
+      limitAttack.setBounds     (lr.withSizeKeepingCentre (ks, ks - z(4)));
+      limitReleaseLbl.setBounds (row.removeFromTop (z(10)));
+      limitRelease.setBounds    (row.withSizeKeepingCentre (ks, ks - z(4))); }
+    pr.removeFromTop (z(6));
+    // GAIN
+    { int ks = z(36);
+      limitGainLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
+      limitGain.setBounds    (pr.removeFromTop (z(36)).withSizeKeepingCentre (ks, ks)); }
+    pr.removeFromTop (z(4));
+    // CEILING
+    { int ks = z(36);
+      limitCeilingLbl.setBounds (pr.removeFromTop (z(10)).withSizeKeepingCentre (pr.getWidth(), z(10)));
+      limitCeiling.setBounds    (pr.removeFromTop (z(36)).withSizeKeepingCentre (ks, ks)); }
 
     // ── Master ───────────────────────────────────────────────────────────────
-    // Layout: title | On/Solo/Δ | tall L/R meters with dB scale | 3×2 knob rows
     pr = p.removeFromLeft (pw[4]); p.removeFromLeft (gap);
     panelBounds[4] = pr;
+    pr.reduce (z(3), 0);
     masterTitle.setBounds (pr.removeFromTop (z (14)));
-    // No On/Solo/Δ buttons in Master per new design — hide them
     masterOnBtn.setBounds ({});
     masterSoloBtn.setBounds ({});
     masterDeltaBtn.setBounds ({});
-    // Tall vertical meters + dB scale — stored so paint() can draw the scale
-    { auto mArea = pr.removeFromTop (z (140));
-      // Meters centred, scale to the right of them
-      int mw   = z (14);  // each meter width
+    // Vertical meters — taller, fill good portion of panel
+    { auto mArea = pr.removeFromTop (z (110));
+      int mw   = z (14);
       int mGap = z (4);
-      int totalMW = mw * 2 + mGap + z (20);  // 2 bars + gap + scale
+      int totalMW = mw * 2 + mGap + z (18);
       int mxStart = mArea.getX() + (mArea.getWidth() - totalMW) / 2;
-      masterMeterL.setBounds (mxStart,        mArea.getY(), mw, mArea.getHeight());
-      masterMeterR.setBounds (mxStart + mw + mGap, mArea.getY(), mw, mArea.getHeight());
-      // dB scale label — we'll draw text manually in paint() using this rect as guide
-      masterDbScale.setBounds (mxStart + mw * 2 + mGap + z (2), mArea.getY(),
-                               z (20), mArea.getHeight());
-      addAndMakeVisible (masterDbScale); }
-    pr.removeFromTop (z (6));
-    // Row 1: MASTER TRIM + HARMONICS (small knobs, z(44) size)
-    { auto row = pr.removeFromTop (z (60));
-      int hf = row.getWidth() / 2;  int ks = z (44);
-      auto lr = row.removeFromLeft (hf);
-      masterMTrimLbl.setBounds     (lr.removeFromTop  (z (10)).withSizeKeepingCentre (hf, z (10)));
-      masterMTrim.setBounds        (lr.withSizeKeepingCentre (ks, ks));
-      masterHarmonicsLbl.setBounds (row.removeFromTop (z (10)).withSizeKeepingCentre (hf, z (10)));
-      masterHarmonics.setBounds    (row.withSizeKeepingCentre (ks, ks)); }
-    pr.removeFromTop (z (6));
-    // Row 2: SHAPE + DEPTH
-    { auto row = pr.removeFromTop (z (60));
-      int hf = row.getWidth() / 2;  int ks = z (44);
-      auto lr = row.removeFromLeft (hf);
-      masterShapeLbl.setBounds (lr.removeFromTop  (z (10)).withSizeKeepingCentre (hf, z (10)));
-      masterShape.setBounds    (lr.withSizeKeepingCentre (ks, ks));
-      masterDepthLbl.setBounds (row.removeFromTop (z (10)).withSizeKeepingCentre (hf, z (10)));
-      masterDepth.setBounds    (row.withSizeKeepingCentre (ks, ks)); }
-    pr.removeFromTop (z (6));
-    // Row 3: GLOBAL MIX + OUTPUT TRIM
-    { auto row = pr.removeFromTop (z (60));
-      int hf = row.getWidth() / 2;  int ks = z (44);
-      auto lr = row.removeFromLeft (hf);
-      masterMixLbl.setBounds     (lr.removeFromTop  (z (10)).withSizeKeepingCentre (hf, z (10)));
-      masterMix.setBounds        (lr.withSizeKeepingCentre (ks, ks));
-      masterOutTrimLbl.setBounds (row.removeFromTop (z (10)).withSizeKeepingCentre (hf, z (10)));
-      masterOutTrim.setBounds    (row.withSizeKeepingCentre (ks, ks)); }
+      masterMeterL.setBounds  (mxStart,             mArea.getY(), mw, mArea.getHeight());
+      masterMeterR.setBounds  (mxStart + mw + mGap, mArea.getY(), mw, mArea.getHeight());
+      masterDbScale.setBounds (mxStart + mw * 2 + mGap + z(2), mArea.getY(),
+                               z (18), mArea.getHeight()); }
+    pr.removeFromTop (z (4));
+    // LUFS readouts — 2-column grid (LONG + SHORT on row 1, INTER on row 2)
+    { juce::Label* vals[] = { &lufsLongVal, &lufsShortVal, &lufsInterVal };
+      juce::Label* caps[] = { &lufsLongLbl, &lufsShortLbl, &lufsInterLbl };
+      // Row 1: LONG + SHORT
+      { auto row = pr.removeFromTop (z (9) + z (14));
+        int hf = row.getWidth() / 2;
+        auto l = row.removeFromLeft (hf);
+        caps[0]->setBounds (l.removeFromTop (z(9)));
+        vals[0]->setBounds (l.reduced (z(1), 0));
+        caps[1]->setBounds (row.removeFromTop (z(9)));
+        vals[1]->setBounds (row.reduced (z(1), 0)); }
+      pr.removeFromTop (z (2));
+      // Row 2: INTER (centred)
+      { auto row = pr.removeFromTop (z (9) + z (14));
+        caps[2]->setBounds (row.removeFromTop (z(9)).withSizeKeepingCentre (row.getWidth(), z(9)));
+        vals[2]->setBounds (row.reduced (z(2), 0)); } }
+    pr.removeFromTop (z (4));
+    // 3×2 knob grid
+    { auto mkRow = [&] (juce::Slider& sL, juce::Label& lL, juce::Slider& sR, juce::Label& lR)
+      {
+          auto row = pr.removeFromTop (z (46)); pr.removeFromTop (z(4));
+          int hf = row.getWidth() / 2; int ks = z(34);
+          auto lr = row.removeFromLeft (hf);
+          lL.setBounds (lr.removeFromTop (z(10)).withSizeKeepingCentre (hf, z(10)));
+          sL.setBounds (lr.withSizeKeepingCentre (ks, ks));
+          lR.setBounds (row.removeFromTop (z(10)).withSizeKeepingCentre (hf, z(10)));
+          sR.setBounds (row.withSizeKeepingCentre (ks, ks));
+      };
+      mkRow (masterMTrim,    masterMTrimLbl,     masterHarmonics, masterHarmonicsLbl);
+      mkRow (masterShape,    masterShapeLbl,     masterDepth,     masterDepthLbl);
+      mkRow (masterMix,      masterMixLbl,       masterOutTrim,   masterOutTrimLbl); }
 
     // ── Clipper ──────────────────────────────────────────────────────────────
     pr = p.removeFromLeft (pw[5]);
     panelBounds[5] = pr;
+    pr.reduce (z(3), 0);
     clipperTitle.setBounds (pr.removeFromTop (z (14)));
     { auto clb = pr.removeFromTop (z (20));
       int bw3 = clb.getWidth() / 3;
@@ -600,24 +627,12 @@ void FlowFormAudioProcessorEditor::resized()
     clipDriveLbl.setBounds    (pr.removeFromTop (z (10))); clipDrive.setBounds    (pr.removeFromTop (z (48)));
     clipSoftnessLbl.setBounds (pr.removeFromTop (z (10))); clipSoftness.setBounds (pr.removeFromTop (z (48)));
     clipLinkLbl.setBounds     (pr.removeFromTop (z (10))); clipLink.setBounds     (pr.removeFromTop (z (48)));
-    pr.removeFromTop (z (4));
-    // LUFS readouts — three LCD-style labels stacked vertically
-    {
-        juce::Label* vals[] = { &lufsLongVal,  &lufsShortVal,  &lufsInterVal  };
-        juce::Label* caps[] = { &lufsLongLbl,  &lufsShortLbl,  &lufsInterLbl  };
-        for (int li = 0; li < 3; ++li)
-        {
-            vals[li]->setBounds (pr.removeFromTop (z (18)).reduced (z (4), 0));
-            caps[li]->setBounds (pr.removeFromTop (z (10)));
-            pr.removeFromTop (z (3));
-        }
-    }
 }
 
 void FlowFormAudioProcessorEditor::applyZoom (float z)
 {
     zoomFactor = z;
-    setSize (juce::roundToInt (1400 * z), juce::roundToInt (600 * z));
+    setSize (juce::roundToInt (1270 * z), juce::roundToInt (620 * z));
 }
 
 void FlowFormAudioProcessorEditor::timerCallback()

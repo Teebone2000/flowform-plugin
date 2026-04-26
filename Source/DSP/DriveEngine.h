@@ -23,6 +23,15 @@ public:
     //==============================================================================
     void prepare(double sampleRate);
     void process(juce::AudioBuffer<float>& buffer, int algorithm, float drive);
+
+    // New: process a single frequency band with crossover split
+    void processBand (juce::AudioBuffer<float>& wet,
+                      const juce::AudioBuffer<float>& dry,
+                      int bandIdx,
+                      float x1Hz, float x2Hz, float x3Hz,
+                      int algo, float driveDb, float mix,
+                      int numChannels, int numSamples);
+
     void reset();
     
     //==============================================================================
@@ -52,8 +61,18 @@ public:
     void configureTransformerStages(const std::array<TransformerStage, 6>& stages);
     
 private:
+    // Cross-over state (single-pole LP/HP per channel for band splitting)
+    float lpState[2][2]  = {{0}};  // [ch][cascade stage]
+    float hpState[2][2]  = {{0}};
+    float midLpState[2]  = {0};
+    float midHpState[2]  = {0};
+    float hiLpState[2]   = {0};
+    float hpMidState[2]  = {0};
+    float hpHiState[2]   = {0};
+    float lrState[2]     = {0};
+
     //==============================================================================
-    double sampleRate = 44100.0;
+    float sampleRate = 44100.0f;
     float currentDrive = 0.0f;
     int currentAlgorithm = TUBE;
     
@@ -83,6 +102,7 @@ private:
     // Helper functions
     float applyToneShaping(float x, int channel);
     float applyTransformerChain(float x, int channel);
+    float applySaturation (float x, int algo, float drive);
     
     // Nonlinear functions
     float tanhSoftClip(float x);
@@ -98,6 +118,7 @@ private:
         float process(float x);
         void setTilt(float tilt); // -1 to 1
         void setBias(float bias); // -1 to 1
+        void reset() { x1 = x2 = y1 = y2 = 0.0f; }
         
     private:
         double sampleRate = 44100.0;

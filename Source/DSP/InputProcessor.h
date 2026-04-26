@@ -56,11 +56,9 @@ private:
     float trimGain = 1.0f;
     float compensationGain = 1.0f;
     
-    // Filters
-    juce::dsp::IIR::Filter<float> loPassFilterL;
-    juce::dsp::IIR::Filter<float> loPassFilterR;
-    juce::dsp::IIR::Filter<float> hiPassFilterL;
-    juce::dsp::IIR::Filter<float> hiPassFilterR;
+    // Filters (per-channel)
+    juce::dsp::IIR::Filter<float> lpFilter[2];
+    juce::dsp::IIR::Filter<float> hpFilter[2];
     
     // Voice tilt filter (shelving EQ)
     struct VoiceFilter

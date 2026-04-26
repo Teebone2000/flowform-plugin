@@ -1,10 +1,8 @@
 #include "ClipperProcessor.h"
-#include <new> // Added as per instruction
+#include <new>
 
-//==============================================================================
 ClipperProcessor::ClipperProcessor()
 {
-    // Default values from Figma
     drive = 18.0f;
     softness = 50.0f;
     link = 18.0f;
@@ -13,184 +11,119 @@ ClipperProcessor::ClipperProcessor()
 void ClipperProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 {
     this->spec = spec;
-    
-    // Prepare oversampler (2x for anti-aliasing)
+
     {
-        // Explicitly destroy any existing instance, then reconstruct in place
         oversampler.~Oversampling();
         new (&oversampler) juce::dsp::Oversampling<float>(
-            static_cast<size_t>(spec.numChannels),
-            1,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR
-        );
-        oversampler.initProcessing(static_cast<size_t>(spec.maximumBlockSize));
+            (size_t) spec.numChannels, 1,
+            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
+        oversampler.initProcessing ((size_t) spec.maximumBlockSize);
     }
-    
-    // Prepare DC blocking filters (high-pass at 20Hz)
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass(spec.sampleRate, 20.0f);
+
+    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeHighPass (spec.sampleRate, 20.0f);
     dcFilterL.coefficients = coeffs;
     dcFilterR.coefficients = coeffs;
-    
+
     reset();
 }
 
 void ClipperProcessor::process(juce::AudioBuffer<float>& buffer)
 {
-    if (!enabled)
-        return;
-    
-    const auto numSamples = buffer.getNumSamples();
-    const auto numChannels = buffer.getNumChannels();
-    
-    // Apply drive
-    float driveGain = 1.0f + drive * 0.02f; // 0-100 maps to 1-3x gain
-    buffer.applyGain(driveGain);
-    
-    // Convert softness (0-100) to knee parameter
-    float knee = softness * 0.01f; // 0-1
-    
-    // Convert link (0-100) to stereo linking amount
-    float linkAmount = link * 0.01f; // 0-1
-    
-    // Process samples
-    for (int ch = 0; ch < numChannels; ++ch)
+    if (!enabled) return;
+
+    const auto n = buffer.getNumSamples();
+    const auto ch = buffer.getNumChannels();
+
+    float driveGain = 1.0f + drive * 0.02f;
+    float knee = softness * 0.01f;
+    float linkAmt = link * 0.01f;
+
+    // Stereo-linked envelope: the control signal is the max of both channels
+    float env = 0.0f; // smoothed envelope follower for linking
+
+    auto* outL = buffer.getWritePointer (0);
+    auto* outR = buffer.getWritePointer (ch > 1 ? 1 : 0);
+
+    for (int i = 0; i < n; ++i)
     {
-        auto* samples = buffer.getWritePointer(ch);
-        auto& dcFilter = (ch == 0) ? dcFilterL : dcFilterR;
-        
-        float prevSample = 0.0f;
-        
-        for (int i = 0; i < numSamples; ++i)
+        float inL = outL[i] * driveGain;
+        float inR = (ch > 1 ? outR[i] : inL) * driveGain;
+
+        // Build linked gain reduction envelope
+        float absMax = std::max (std::abs (inL), ch > 1 ? std::abs (inR) : 0.0f);
+        env = linkAmt * absMax + (1.0f - linkAmt) * env; // smoothed
+
+        // Reduce both channels by linked envelope if link > 0
+        float gainReduction = 1.0f;
+        if (linkAmt > 0.001f && env > 0.9f)
+            gainReduction = 0.9f / (env + 1e-12f);
+
+        float xL = inL * gainReduction;
+        // Clip
+        float threshold = 0.9f;
+        switch (clipType)
         {
-            float x = samples[i];
-            
-            // Apply stereo linking (simplified)
-            if (ch == 1 && linkAmount > 0.0f) // Right channel
-            {
-                // Blend with left channel based on link amount
-                float linked = samples[i] * (1.0f - linkAmount) + prevSample * linkAmount;
-                x = linked;
-            }
-            
-            // Apply clipping based on type
-            float threshold = 0.9f; // Base threshold
-            
+            case SOFT:   xL = softClip (xL, threshold, knee); break;
+            case HARD:   xL = hardClip (xL, threshold);       break;
+            case FOLDING:xL = foldbackClip (xL, threshold);   break;
+            default:     xL = softClip (xL, threshold, knee); break;
+        }
+        xL = dcFilterL.processSample (xL);
+        outL[i] = xL;
+
+        if (ch > 1)
+        {
+            float xR = inR * gainReduction;
             switch (clipType)
             {
-                case SOFT:
-                    x = softClip(x, threshold, knee);
-                    break;
-                    
-                case HARD:
-                    x = hardClip(x, threshold);
-                    break;
-                    
-                case FOLDING:
-                    x = foldbackClip(x, threshold);
-                    break;
-                    
-                default:
-                    x = softClip(x, threshold, knee);
-                    break;
+                case SOFT:   xR = softClip (xR, threshold, knee); break;
+                case HARD:   xR = hardClip (xR, threshold);       break;
+                case FOLDING:xR = foldbackClip (xR, threshold);   break;
+                default:     xR = softClip (xR, threshold, knee); break;
             }
-            
-            // Remove DC offset
-            x = dcFilter.processSample(x);
-            
-            samples[i] = x;
-            
-            // Store for linking
-            if (ch == 0) // Left channel
-            {
-                prevSample = x;
-            }
-            
-            // Update output level
-            outputLevel = 0.999f * outputLevel + 0.001f * std::abs(x);
+            xR = dcFilterR.processSample (xR);
+            outR[i] = xR;
         }
+
+        outputLevel = 0.999f * outputLevel + 0.001f * std::abs (outL[i]);
     }
 }
 
 void ClipperProcessor::reset()
 {
     outputLevel = -60.0f;
-    
-    // Reset oversampler if it has been initialised
     oversampler.reset();
     dcFilterL.reset();
     dcFilterR.reset();
 }
 
-//==============================================================================
-void ClipperProcessor::setDrive(float d)
-{
-    drive = juce::jlimit(0.0f, 100.0f, d);
-}
+void ClipperProcessor::setDrive(float d)     { drive = juce::jlimit (0.0f, 100.0f, d); }
+void ClipperProcessor::setSoftness(float s)  { softness = juce::jlimit (0.0f, 100.0f, s); }
+void ClipperProcessor::setLink(float l)      { link = juce::jlimit (0.0f, 100.0f, l); }
 
-void ClipperProcessor::setSoftness(float s)
+float ClipperProcessor::softClip(float x, float threshold, float knee)
 {
-    softness = juce::jlimit(0.0f, 100.0f, s);
-}
+    float absX = std::abs (x);
+    if (absX <= threshold) return x;
 
-void ClipperProcessor::setLink(float l)
-{
-    link = juce::jlimit(0.0f, 100.0f, l);
-}
-
-//==============================================================================
-float ClipperProcessor::softClip(float x, float threshold, float softness)
-{
-    float absX = std::abs(x);
-    
-    if (absX <= threshold)
-    {
-        // Below threshold - no clipping
-        return x;
-    }
-    else
-    {
-        // Above threshold - soft knee
-        float overshoot = absX - threshold;
-        float knee = softness * 0.5f; // Adjust knee based on softness
-        
-        // Cubic soft knee
-        float reduction = overshoot / (1.0f + overshoot * knee);
-        
-        return std::copysign(threshold + reduction, x);
-    }
+    float overshoot = absX - threshold;
+    float reduction = overshoot / (1.0f + overshoot * knee);
+    return std::copysign (threshold + reduction, x);
 }
 
 float ClipperProcessor::hardClip(float x, float threshold)
 {
-    if (x > threshold)
-        return threshold;
-    else if (x < -threshold)
-        return -threshold;
-    else
-        return x;
+    return juce::jlimit (-threshold, threshold, x);
 }
 
 float ClipperProcessor::foldbackClip(float x, float threshold)
 {
-    float absX = std::abs(x);
-    
-    if (absX <= threshold)
-    {
-        // Below threshold - no folding
-        return x;
-    }
-    else
-    {
-        // Fold back
-        float folded = 2.0f * threshold - absX;
-        
-        // If still above threshold, fold again (can create interesting harmonics)
-        while (folded > threshold)
-        {
-            folded = 2.0f * threshold - folded;
-        }
-        
-        return std::copysign(folded, x);
-    }
-}
+    float absX = std::abs (x);
+    if (absX <= threshold) return x;
 
+    float folded = 2.0f * threshold - absX;
+    while (std::abs (folded) > threshold)
+        folded = 2.0f * threshold - std::abs (folded);
+
+    return std::copysign (folded, x);
+}

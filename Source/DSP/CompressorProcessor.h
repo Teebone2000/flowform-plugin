@@ -86,15 +86,11 @@ private:
     float inputLevel = -60.0f;
     float outputLevel = -60.0f;
     
-    // Envelope followers
-    float envelopeL = 0.0f;
-    float envelopeR = 0.0f;
-    float envelopeM = 0.0f;
-    float envelopeS = 0.0f;
+    // Envelope followers (2 channels max)
+    std::array<float, 2> envelope { 0.0f, 0.0f };
     
-    // Sidechain filter
-    juce::dsp::IIR::Filter<float> sidechainFilterL;
-    juce::dsp::IIR::Filter<float> sidechainFilterR;
+    // Sidechain filters
+    juce::dsp::IIR::Filter<float> scFilter[2];
     
     // Attack/release coefficients
     float attackCoeff = 0.0f;

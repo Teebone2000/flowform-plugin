@@ -1,9 +1,7 @@
 #include "DriveEngine.h"
 
-//==============================================================================
 DriveEngine::DriveEngine()
 {
-    // Initialize transformer stages
     for (auto& stage : transformerStages)
     {
         stage.enabled = true;
@@ -16,322 +14,248 @@ DriveEngine::DriveEngine()
 
 void DriveEngine::prepare(double sampleRate)
 {
-    this->sampleRate = sampleRate;
-    
-    // Prepare tone filters
-    for (auto& filter : toneFilters)
-    {
-        filter.prepare(sampleRate);
-    }
-    
-    // Reset state
+    this->sampleRate = (float) sampleRate;
+    for (auto& filter : toneFilters) filter.prepare (sampleRate);
     reset();
-}
-
-void DriveEngine::process(juce::AudioBuffer<float>& buffer, int algorithm, float drive)
-{
-    currentAlgorithm = algorithm;
-    currentDrive = drive;
-    
-    // Pass through clean if no drive
-    if (std::abs (drive) < 0.001f)
-        return;
-    
-    const auto numChannels = buffer.getNumChannels();
-    const auto numSamples = buffer.getNumSamples();
-    
-    for (int ch = 0; ch < numChannels; ++ch)
-    {
-        auto* samples = buffer.getWritePointer(ch);
-        
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float x = samples[i];
-            
-            // Apply tone shaping
-            x = applyToneShaping(x, ch);
-            
-            // Apply drive based on algorithm
-            switch (currentAlgorithm)
-            {
-                case TUBE:        x = processTube(x, currentDrive); break;
-                case TAPE:        x = processTape(x, currentDrive); break;
-                case SOLID_STATE: x = processSolidState(x, currentDrive); break;
-                case TRANSFORMER: x = processTransformer(x, currentDrive); break;
-                case DIGITAL:     x = processDigital(x, currentDrive); break;
-                case TRANSISTOR:  x = processTransistor(x, currentDrive); break;
-                default:          x = processTube(x, currentDrive); break;
-            }
-            
-            // Apply transformer chain for all algorithms (adds character)
-            x = applyTransformerChain(x, ch);
-            
-            samples[i] = x;
-        }
-    }
 }
 
 void DriveEngine::reset()
 {
-    dcOffset.fill(0.0f);
-    lastSample.fill(0.0f);
-    
-    for (auto& filter : toneFilters)
+    dcOffset.fill (0.0f);
+    lastSample.fill (0.0f);
+    for (auto& t : toneFilters) t.reset();
+    lrState[0] = lrState[1] = 0.0f;
+}
+
+// ── New: process a single band with crossover split ─────────────────────
+// Splits the dry signal into band `bandIdx`, applies saturation, writes to wet buffer.
+// The split uses simple 2-pole state-variable filters at x1, x2, x3.
+void DriveEngine::processBand (juce::AudioBuffer<float>& wet,
+                               const juce::AudioBuffer<float>& dry,
+                               int bandIdx,
+                               float x1Hz, float x2Hz, float x3Hz,
+                               int algo, float driveDb, float mix,
+                               int numChannels, int numSamples)
+{
+    if (numChannels < 1) return;
+
+    auto* wetL = wet.getWritePointer (0);
+    auto* wetR = numChannels > 1 ? wet.getWritePointer (1) : wetL;
+    auto* dryL = dry.getReadPointer (0);
+    auto* dryR = numChannels > 1 ? dry.getReadPointer (1) : dryL;
+
+    float driveLin = std::pow (10.0f, driveDb / 20.0f);
+    float mixScale = mix;  // 0..1
+
+    for (int i = 0; i < numSamples; ++i)
     {
-        // Reset filter state
+        float inL = dryL[i];
+        float inR = dryR[i];
+
+        // Simple LR4-style crossovers using 1-pole IIR cascaded
+        // We use a state-variable approach: each band = bp at (x1,x2) or lp/hp
+        float bandL = 0.0f, bandR = 0.0f;
+
+        // Crossover frequencies — clamp sanely
+        float fLow  = juce::jlimit (10.0f, 20000.0f, x1Hz);
+        float fMid  = juce::jlimit (10.0f, 20000.0f, x2Hz);
+        float fHigh = juce::jlimit (10.0f, 20000.0f, x3Hz);
+
+        float dt = 1.0f / (sampleRate + 1e-12f);
+
+        // Per-channel crossover filtering
+        for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
+        {
+            float in = (ch == 0) ? inL : inR;
+            float& lp1 = lpState[ch][0];
+            float& lp2 = lpState[ch][1];
+            float& hp1 = hpState[ch][0];
+            float& hp2 = hpState[ch][1];
+            float& midLP = midLpState[ch];
+            float& midHP = midHpState[ch];
+            float& hiLP = hiLpState[ch];
+
+            // Band 0 (LOW): LP at fLow
+            float aLow = dt / (1.0f / (2.0f * 3.14159f * fLow) + dt);
+            lp1 = lp1 + aLow * (in - lp1);  // 1-pole LP
+            lp2 = lp2 + aLow * (lp1 - lp2); // cascade for 2-pole
+
+            // Band 1 (LOW-MID): BP at [fLow, fMid] = HP first then LP
+            float aHP = dt / (1.0f / (2.0f * 3.14159f * fLow) + dt);
+            midHP = midHP + aHP * (in - midHP); // 1-pole HP
+            float hpOut = in - midHP;
+            float aMidLP = dt / (1.0f / (2.0f * 3.14159f * fMid) + dt);
+            midLP = midLP + aMidLP * (hpOut - midLP); // LP cascade
+            float midOut = midLP;
+
+            // Band 2 (HIGH-MID): BP at [fMid, fHigh]
+            float aMidHP = dt / (1.0f / (2.0f * 3.14159f * fMid) + dt);
+            float& hpMid = hpMidState[ch];
+            hpMid = hpMid + aMidHP * (in - hpMid);
+            float hpMidOut = in - hpMid;
+            float aHiLP  = dt / (1.0f / (2.0f * 3.14159f * fHigh) + dt);
+            hiLP = hiLP + aHiLP * (hpMidOut - hiLP);
+
+            // Band 3 (HIGH): HP at fHigh
+            float aHiHP = dt / (1.0f / (2.0f * 3.14159f * fHigh) + dt);
+            float& hp3 = hpHiState[ch];
+            hp3 = hp3 + aHiHP * (in - hp3);
+            float hiOut = in - hp3;
+
+            float sel;
+            switch (bandIdx)
+            {
+                case 0: sel = lp2;        break;  // LOW
+                case 1: sel = midOut;     break;  // LO-MID
+                case 2: sel = hiLP;       break;  // HI-MID (midHP->LP at fHigh)
+                case 3: sel = hiOut;      break;  // HIGH
+                default: sel = 0.0f;       break;
+            }
+
+            // Now apply saturation algorithm to band signal
+            float sat = sel;
+            sat = applySaturation (sat, algo, driveLin);
+
+            // Mix wet with dry per-band
+            sat = sel * (1.0f - mixScale) + sat * mixScale;
+
+            if (ch == 0) bandL = sat;
+            else         bandR = sat;
+        }
+
+        // Accumulate into wet buffer (summed across bands)
+        wetL[i] += bandL;
+        wetR[i] += bandR;
     }
 }
 
-//==============================================================================
-void DriveEngine::setVoiceTilt(float tilt)
+// ── Core saturation functions ──────────────────────────────────────────
+float DriveEngine::applySaturation (float x, int algo, float drive)
 {
-    voiceTilt = juce::jlimit(-50.0f, 50.0f, tilt) / 50.0f; // Normalize to -1..1
-    
-    for (auto& filter : toneFilters)
+    switch (algo)
     {
-        filter.setTilt(voiceTilt);
+        case 0: x = processTube (x, drive);         break;
+        case 1: x = processTape (x, drive);         break;
+        case 2: x = processSolidState (x, drive);   break;
+        case 3: x = processTransformer (x, drive);  break;
+        default: break;
+    }
+    return x;
+}
+
+// ── Legacy process (kept for API compat, now acts on full signal) ─────
+void DriveEngine::process(juce::AudioBuffer<float>& buffer, int algorithm, float drive)
+{
+    currentAlgorithm = algorithm;
+    currentDrive = drive;
+    if (std::abs (drive) < 0.001f) return;
+
+    const auto numChannels = buffer.getNumChannels();
+    const auto numSamples  = buffer.getNumSamples();
+
+    for (int ch = 0; ch < numChannels; ++ch)
+    {
+        auto* samples = buffer.getWritePointer (ch);
+        for (int i = 0; i < numSamples; ++i)
+            samples[i] = applySaturation (samples[i], algorithm, drive);
     }
 }
 
-void DriveEngine::setVoiceBias(float bias)
-{
-    voiceBias = juce::jlimit(-50.0f, 50.0f, bias) / 50.0f; // Normalize to -1..1
-    
-    for (auto& filter : toneFilters)
-    {
-        filter.setBias(voiceBias);
-    }
-}
-
-void DriveEngine::setEQBias(float bias)
-{
-    eqBias = bias;
-}
-
-void DriveEngine::setEQFlip(bool flip)
-{
-    eqFlip = flip;
-}
-
-void DriveEngine::setEQMult(float mult)
-{
-    eqMult = mult;
-}
-
-void DriveEngine::configureTransformerStages(const std::array<TransformerStage, 6>& stages)
-{
-    transformerStages = stages;
-}
-
-//==============================================================================
+// ── Saturation algorithm implementations ────────────────────────────────
 float DriveEngine::processTube(float x, float drive)
 {
-    // Tube saturation simulation
     float gain = 1.0f + drive * 0.1f;
     x *= gain;
-    
-    // Soft asymmetric clipping
+
     if (x > 0.0f)
-        x = tanhSoftClip(x * 1.2f) * 0.833f; // Slightly different for positive
+        x = tanhSoftClip (x * 1.2f) * 0.833f;
     else
-        x = tanhSoftClip(x * 0.8f) * 1.25f; // Different for negative
-    
-    // Add even harmonics characteristic of tubes
-    float evenHarm = x * x * 0.1f * (drive / 100.0f);
+        x = tanhSoftClip (x * 0.8f) * 1.25f;
+
+    // Even harmonics
+    float evenHarm = x * x * 0.1f * (drive / (100.0f + 1e-6f));
     x += evenHarm;
-    
-    // DC blocking
+
+    // DC block
     float dc = dcOffset[0];
     dc = 0.999f * dc + 0.001f * x;
     x -= dc;
     dcOffset[0] = dc;
-    
+
     return x;
 }
 
 float DriveEngine::processTape(float x, float drive)
 {
-    // Tape saturation with hysteresis
     float gain = 1.0f + drive * 0.05f;
     x *= gain;
-    
-    // Magnetic hysteresis simulation
+
     float hysteresis = transformerStages[0].hysteresis * 0.1f;
     float state = lastSample[0];
-    
-    // Simple hysteresis model
     float threshold = 0.1f;
-    if (std::abs(x - state) > threshold)
+    if (std::abs (x - state) > threshold)
     {
-        // Hysteresis effect
-        if (x > state)
-            x += hysteresis * 0.05f;
-        else
-            x -= hysteresis * 0.05f;
+        if (x > state) x += hysteresis * 0.05f;
+        else           x -= hysteresis * 0.05f;
     }
-    
-    // Asymmetric tape saturation
+
     if (x > 0.0f)
-        x = tanhSoftClip(x);
+        x = tanhSoftClip (x);
     else
-        x = tanhSoftClip(x * 0.7f) * 1.428f; // More compression on negative
-    
-    // Add tape compression (soft knee)
-    float compression = 0.5f + 0.5f * (drive / 100.0f);
-    x = x / (1.0f + std::abs(x) * compression);
-    
+        x = tanhSoftClip (x * 0.7f) * 1.428f;
+
+    float compression = 0.5f + 0.5f * (drive / (100.0f + 1e-6f));
+    x = x / (1.0f + std::abs (x) * compression);
+
     lastSample[0] = x;
-    
     return x;
 }
 
 float DriveEngine::processSolidState(float x, float drive)
 {
-    // Solid-state transistor saturation
     float gain = 1.0f + drive * 0.15f;
     x *= gain;
-    
-    // Diode-like clipping
-    x = diodeClipping(x);
-    
-    // Add odd harmonics
+    x = diodeClipping (x);
     float x3 = x * x * x;
-    x += x3 * 0.05f * (drive / 100.0f);
-    
-    // Harder clipping characteristic
+    x += x3 * 0.05f * (drive / (100.0f + 1e-6f));
     float limit = 0.8f;
-    if (x > limit) x = limit + (x - limit) * 0.3f;
-    if (x < -limit) x = -limit + (x + limit) * 0.3f;
-    
+    if (x > limit)  x = limit  + (x - limit)  * 0.3f;
+    if (x < -limit) x = -limit + (x + limit)  * 0.3f;
     return x;
 }
 
 float DriveEngine::processTransformer(float x, float drive)
 {
-    // Transformer saturation with multiple stages
-    x = applyTransformerChain(x, 0);
-    
-    // Additional saturation
     float gain = 1.0f + drive * 0.08f;
     x *= gain;
-    
-    // Core saturation curve
     x = x / (1.0f + x * x * 0.5f);
-    
     return x;
 }
 
 float DriveEngine::processDigital(float x, float drive)
 {
-    // Digital clipping with aliasing prevention
     float gain = 1.0f + drive * 0.2f;
     x *= gain;
-    
-    // Hard clip with oversampling consideration
     float limit = 0.95f;
-    if (x > limit) x = limit;
-    if (x < -limit) x = -limit;
-    
-    // Add digital distortion harmonics
-    float folded = std::sin(x * 3.14159f) * 0.1f * (drive / 100.0f);
+    x = juce::jlimit (-limit, limit, x);
+    float folded = std::sin (x * 3.14159f) * 0.1f * (drive / (100.0f + 1e-6f));
     x += folded;
-    
     return x;
 }
 
 float DriveEngine::processTransistor(float x, float drive)
 {
-    // Transistor fuzz/distortion
     float gain = 1.0f + drive * 0.25f;
     x *= gain;
-    
-    // Asymmetric transistor clipping
-    x = asymmetricClip(x);
-    
-    // Add transistor characteristic
-    if (x > 0.0f)
-        x = std::atan(x * 2.0f) * 0.5f;
-    else
-        x = std::atan(x * 1.5f) * 0.666f;
-    
+    x = asymmetricClip (x);
+    if (x > 0.0f) x = std::atan (x * 2.0f) * 0.5f;
+    else          x = std::atan (x * 1.5f) * 0.666f;
     return x;
 }
 
-//==============================================================================
-float DriveEngine::applyToneShaping(float x, int channel)
-{
-    // Apply voice tilt and bias
-    x = toneFilters[channel].process(x);
-    
-    // Apply EQ bias
-    if (eqBias != 0.0f)
-    {
-        float biasFactor = 1.0f + eqBias * 0.01f;
-        x *= biasFactor;
-    }
-    
-    // Apply EQ flip
-    if (eqFlip)
-    {
-        // Spectral inversion (simplified)
-        x = -x * 0.7f; // Not true spectral inversion but gives a sense of it
-    }
-    
-    // Apply EQ multiplication
-    x *= eqMult;
-    
-    return x;
-}
-
-float DriveEngine::applyTransformerChain(float x, int channel)
-{
-    float result = x;
-    
-    for (int stage = 0; stage < 6; ++stage)
-    {
-        if (!transformerStages[stage].enabled)
-            continue;
-        
-        float saturation = transformerStages[stage].saturation;
-        float freqResponse = transformerStages[stage].frequencyResponse;
-        
-        // Apply frequency response (simplified)
-        result *= freqResponse;
-        
-        // Apply stage saturation
-        if (saturation > 0.0f)
-        {
-            float satGain = 1.0f + saturation;
-            result *= satGain;
-            result = tanhSoftClip(result);
-            result /= satGain; // Compensate gain
-        }
-        
-        // Apply hysteresis from this stage
-        if (transformerStages[stage].hysteresis > 0.0f)
-        {
-            static float hysteresisState[6][2] = {{0}};
-            result = magneticHysteresis(result, hysteresisState[stage][channel]);
-        }
-        
-        // Apply phase shift (simplified)
-        if (transformerStages[stage].phaseShift != 0.0f)
-        {
-            // Simple all-pass-like effect
-            float phase = transformerStages[stage].phaseShift * 0.1f;
-            float delayed = lastSample[channel];
-            result = result * (1.0f - phase) + delayed * phase;
-            lastSample[channel] = result;
-        }
-    }
-    
-    return result;
-}
-
-//==============================================================================
+// ── Helper functions ──────────────────────────────────────────────────
 float DriveEngine::tanhSoftClip(float x)
 {
-    // Fast tanh approximation
     float x2 = x * x;
     float x4 = x2 * x2;
     return x * (27.0f + x2) / (27.0f + 9.0f * x2 + x4);
@@ -339,96 +263,52 @@ float DriveEngine::tanhSoftClip(float x)
 
 float DriveEngine::asymmetricClip(float x)
 {
-    // Asymmetric clipping
-    if (x > 0.0f)
-        return std::tanh(x * 0.8f) * 1.25f;
-    else
-        return std::tanh(x * 1.2f) * 0.833f;
+    if (x > 0.0f) return std::tanh (x * 0.8f) * 1.25f;
+    else          return std::tanh (x * 1.2f) * 0.833f;
 }
 
 float DriveEngine::diodeClipping(float x)
 {
-    // Diode-like exponential clipping
-    if (x > 0.0f)
-        return 1.0f - std::exp(-x * 1.5f);
-    else
-        return -1.0f + std::exp(x * 1.5f);
+    if (x > 0.0f) return 1.0f - std::exp (-x * 1.5f);
+    else          return -1.0f + std::exp (x * 1.5f);
 }
 
 float DriveEngine::magneticHysteresis(float x, float& state)
 {
-    // Simple hysteresis model
     float delta = x - state;
-    float hysteresis = 0.05f; // Base hysteresis amount
-    
-    if (delta > hysteresis)
-        state = x - hysteresis;
-    else if (delta < -hysteresis)
-        state = x + hysteresis;
-    else
-        state = state; // Stay in hysteresis zone
-    
+    float hysteresis = 0.05f;
+    if (delta > hysteresis)       state = x - hysteresis;
+    else if (delta < -hysteresis) state = x + hysteresis;
     return state;
 }
 
-//==============================================================================
-// ToneFilter implementation
-void DriveEngine::ToneFilter::prepare(double sr)
-{
-    sampleRate = sr;
-    updateCoefficients();
-}
+// ── ToneFilter ─────────────────────────────────────────────────────────
+void DriveEngine::ToneFilter::prepare(double sr) { sampleRate = sr; }
 
 float DriveEngine::ToneFilter::process(float x)
 {
-    // Simple tilt EQ: boost highs if tilt > 0, boost lows if tilt < 0
-    
-    // Update filter coefficients based on tilt
-    updateCoefficients();
-    
-    // Simple shelving filter implementation
-    float omega = 2.0f * 3.14159f * 1000.0f / sampleRate; // 1kHz center
-    float alpha = std::sin(omega) / (2.0f * 0.707f); // Q = 0.707
-    
-    // Calculate shelving filter coefficients
-    float A = std::pow(10.0f, tilt * 0.25f); // Gain based on tilt
-    float sqrtA = std::sqrt(A);
-    
-    float b0 = A * ((A + 1.0f) + (A - 1.0f) * std::cos(omega) + 2.0f * sqrtA * alpha);
-    float b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * std::cos(omega));
-    float b2 = A * ((A + 1.0f) + (A - 1.0f) * std::cos(omega) - 2.0f * sqrtA * alpha);
-    float a0 = (A + 1.0f) - (A - 1.0f) * std::cos(omega) + 2.0f * sqrtA * alpha;
-    float a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * std::cos(omega));
-    float a2 = (A + 1.0f) - (A - 1.0f) * std::cos(omega) - 2.0f * sqrtA * alpha;
-    
-    // Normalize
+    float omega = 2.0f * 3.14159f * 1000.0f / (float) sampleRate;
+    float alpha = std::sin (omega) / (2.0f * 0.707f);
+    float A = std::pow (10.0f, tilt * 0.25f);
+    float sqrtA = std::sqrt (A);
+
+    float b0 = A * ((A + 1.0f) + (A - 1.0f) * std::cos (omega) + 2.0f * sqrtA * alpha);
+    float b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * std::cos (omega));
+    float b2 = A * ((A + 1.0f) + (A - 1.0f) * std::cos (omega) - 2.0f * sqrtA * alpha);
+    float a0 = (A + 1.0f) - (A - 1.0f) * std::cos (omega) + 2.0f * sqrtA * alpha;
+    float a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * std::cos (omega));
+    float a2 = (A + 1.0f) - (A - 1.0f) * std::cos (omega) - 2.0f * sqrtA * alpha;
+
     b0 /= a0; b1 /= a0; b2 /= a0;
     a1 /= a0; a2 /= a0;
-    
-    // Process with bias
+
     float y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-    
-    // Update state
     x2 = x1; x1 = x;
     y2 = y1; y1 = y;
-    
-    // Apply bias (simple gain)
     y *= (1.0f + bias * 0.1f);
-    
     return y;
 }
 
-void DriveEngine::ToneFilter::setTilt(float t)
-{
-    tilt = t;
-}
-
-void DriveEngine::ToneFilter::setBias(float b)
-{
-    bias = b;
-}
-
-void DriveEngine::ToneFilter::updateCoefficients()
-{
-    // Coefficients are calculated in process()
-}
+void DriveEngine::ToneFilter::setTilt(float t) { tilt = t; }
+void DriveEngine::ToneFilter::setBias(float b) { bias = b; }
+void DriveEngine::ToneFilter::updateCoefficients() {}

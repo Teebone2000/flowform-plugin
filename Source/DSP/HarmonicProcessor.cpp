@@ -18,16 +18,14 @@ void HarmonicProcessor::prepare(const juce::dsp::ProcessSpec& spec)
 {
     this->spec = spec;
     
-    // Update gains
-    mTrimGain = std::pow(10.0f, mTrimDb / 20.0f);
-    outputTrimGain = std::pow(10.0f, outputTrimDb / 20.0f);
-    mixWet = globalMix * 0.01f;
+    mTrimGain = std::pow (10.0f, mTrimDb / 20.0f);
+    outputTrimGain = std::pow (10.0f, outputTrimDb / 20.0f);
+    mixWet = globalMix;
     mixDry = 1.0f - mixWet;
     
-    // Prepare anti-aliasing filter (low-pass at Nyquist/2)
-    float nyquist = static_cast<float>(spec.sampleRate) * 0.5f;
+    float nyquist = (float) spec.sampleRate * 0.5f;
     float cutoff = nyquist * 0.5f;
-    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass(spec.sampleRate, cutoff);
+    auto coeffs = juce::dsp::IIR::Coefficients<float>::makeLowPass (spec.sampleRate, cutoff);
     antiAliasFilterL.coefficients = coeffs;
     antiAliasFilterR.coefficients = coeffs;
     
@@ -56,12 +54,9 @@ void HarmonicProcessor::process(juce::AudioBuffer<float>& buffer)
         generateHarmonics(buffer.getWritePointer(ch), numSamples, ch);
     }
     
-    // Apply depth control (global intensity)
-    if (depth < 100.0f)
-    {
-        float depthFactor = depth * 0.01f;
-        buffer.applyGain(depthFactor);
-    }
+    // Depth controls the waveshaping character, not a separate gain stage.
+    // The actual waveshaping intensity is modulated by 'shape' and 'harmonics'.
+    juce::ignoreUnused (depth);
     
     // Apply anti-aliasing filter
     for (int ch = 0; ch < numChannels; ++ch)
@@ -137,8 +132,9 @@ void HarmonicProcessor::setDepth(float d)
 
 void HarmonicProcessor::setGlobalMix(float mix)
 {
-    globalMix = juce::jlimit(0.0f, 100.0f, mix);
-    mixWet = globalMix * 0.01f;
+    // Input is 0..1 from editor; store as fraction
+    globalMix = juce::jlimit (0.0f, 1.0f, mix);
+    mixWet = globalMix;
     mixDry = 1.0f - mixWet;
 }
 

@@ -244,18 +244,49 @@ void FlowFormAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         compGR = compressor.getGainReduction();
     }
 
-    // Saturation (4-band via DriveEngine)
+    // Saturation (4-band with crossover split via DriveEngine)
     if (satOn)
     {
+        const int numChan = buffer.getNumChannels();
+        float x1 = getF (ParamIDs::x1Hz);
+        float x2 = getF (ParamIDs::x2Hz);
+        float x3 = getF (ParamIDs::x3Hz);
+        float globalSatMix = getF (ParamIDs::satMix);
+
+        // Create a wet accumulation buffer (initialised to zero)
+        juce::AudioBuffer<float> wetBuf;
+        wetBuf.setSize (numChan, n, false, true, true); // clear=true
+
+        // Snapshot the buffer BEFORE saturation for the SAT DRY reference
+        juce::AudioBuffer<float> satDry;
+        satDry.makeCopyOf (buffer);
+
+        // Process each enabled band, accumulating into wetBuf
         for (int b = 0; b < 4; ++b)
         {
             if (!getB (bnd (b, ParamIDs::on).toRawUTF8())) continue;
-            float driveDb = getF (bnd (b, ParamIDs::driveDb).toRawUTF8()) * 0.36f;
+
+            float driveDb = getF (bnd (b, ParamIDs::driveDb).toRawUTF8());
             float mix     = getF (bnd (b, ParamIDs::mix).toRawUTF8());
             int   algo    = (int) getF (bnd (b, ParamIDs::algo).toRawUTF8());
-            driveEngine.setDrive (flowform::dbToLin (driveDb));
-            driveEngine.setAlgorithm (algo);
-            driveEngine.process (buffer, algo, flowform::dbToLin (driveDb));
+
+            driveEngine.processBand (wetBuf, satDry, b,
+                                     x1, x2, x3,
+                                     algo, driveDb, mix,
+                                     numChan, n);
+        }
+
+        // Mix wet back into buffer: out = dry + wet * satMix
+        auto* wetL = wetBuf.getReadPointer (0);
+        auto* wetR = numChan > 1 ? wetBuf.getReadPointer (1) : wetL;
+        auto* dryL = satDry.getReadPointer (0);
+        auto* dryR = numChan > 1 ? satDry.getReadPointer (1) : dryL;
+
+        for (int i = 0; i < n; ++i)
+        {
+            outL[i] = dryL[i] + wetL[i] * globalSatMix;
+            if (numChan > 1)
+                outR[i] = dryR[i] + wetR[i] * globalSatMix;
         }
     }
 
